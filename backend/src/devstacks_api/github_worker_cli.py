@@ -7,6 +7,7 @@ from devstacks_domain import FernetTokenCipher, TargetedRevalidationService
 from .github_evidence import GitHubEvidenceIngestionService
 from .github_worker import GitHubIngestionWorker
 from .repositories import (
+    SupabaseAgentRunRepository,
     SupabaseGitHubEvidenceRepository,
     SupabaseIngestionJobRepository,
     SupabaseRevalidationRepository,
@@ -22,6 +23,7 @@ async def run_once() -> int:
         SupabaseGitHubEvidenceRepository(settings),
         token_cipher,
         revalidation_service=TargetedRevalidationService(SupabaseRevalidationRepository(settings)),
+        agent_run_repository=SupabaseAgentRunRepository(settings),
     )
     result = await GitHubIngestionWorker(
         SupabaseIngestionJobRepository(settings),

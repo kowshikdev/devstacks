@@ -1,6 +1,9 @@
+from datetime import datetime, timezone
 from os import getenv
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from .auth import AuthenticatedUser, get_current_user, get_tenant_context
 from .github_oauth import (
@@ -19,21 +22,53 @@ from .repositories import (
     ProfileRepository,
     PublicProfileRepository,
     RepositoryUnavailableError,
+    SupabaseAgentRunRepository,
+    SupabaseClaimRepository,
     SupabaseGitHubAuthorizationRepository,
     SupabaseGitHubWebhookRepository,
     SupabaseIngestionJobRepository,
+    SupabasePublicationRepository,
     SupabasePublicProfileRepository,
     SupabaseProfileRepository,
+    SupabaseReviewRepository,
     SupabaseServiceSettings,
+    SupabaseVerificationRepository,
 )
 
-from devstacks_domain import FernetTokenCipher, TenantContext, TokenCipherError
+from devstacks_domain import (
+    EvidenceValidity,
+    FernetTokenCipher,
+    ProvenanceError,
+    PublicationContext,
+    PublicationRequest,
+    PublicationService,
+    ReviewDecisionService,
+    ReviewStatus,
+    TenantContext,
+    TokenCipherError,
+    TransitionError,
+    VerificationStatus,
+)
 
 
 app = FastAPI(
     title="DevStacks API",
     version="0.1.0",
     description="API for the DevStacks developer evidence graph.",
+)
+
+_default_allowed_origins = "http://localhost:3000,http://127.0.0.1:3000"
+_allowed_origins = [
+    origin.strip()
+    for origin in getenv("DEVSTACKS_ALLOWED_ORIGINS", _default_allowed_origins).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -118,6 +153,77 @@ def get_github_webhook_repository(request: Request) -> SupabaseGitHubWebhookRepo
         ) from error
 
 
+def get_claim_repository(request: Request) -> SupabaseClaimRepository:
+    repository: SupabaseClaimRepository | None = getattr(request.app.state, "claim_repository", None)
+    if repository is not None:
+        return repository
+    try:
+        return SupabaseClaimRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Claims service is unavailable",
+        ) from error
+
+
+def get_verification_repository(request: Request) -> SupabaseVerificationRepository:
+    repository: SupabaseVerificationRepository | None = getattr(
+        request.app.state, "verification_repository", None
+    )
+    if repository is not None:
+        return repository
+    try:
+        return SupabaseVerificationRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification service is unavailable",
+        ) from error
+
+
+def get_review_repository(request: Request) -> SupabaseReviewRepository:
+    repository: SupabaseReviewRepository | None = getattr(request.app.state, "review_repository", None)
+    if repository is not None:
+        return repository
+    try:
+        return SupabaseReviewRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Review service is unavailable",
+        ) from error
+
+
+def get_publication_repository(request: Request) -> SupabasePublicationRepository:
+    repository: SupabasePublicationRepository | None = getattr(
+        request.app.state, "publication_repository", None
+    )
+    if repository is not None:
+        return repository
+    try:
+        return SupabasePublicationRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Publication service is unavailable",
+        ) from error
+
+
+def get_agent_run_repository(request: Request) -> SupabaseAgentRunRepository:
+    repository: SupabaseAgentRunRepository | None = getattr(
+        request.app.state, "agent_run_repository", None
+    )
+    if repository is not None:
+        return repository
+    try:
+        return SupabaseAgentRunRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent run service is unavailable",
+        ) from error
+
+
 @app.get("/health", tags=["system"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -163,6 +269,43 @@ async def own_profile(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Profile not found",
         )
+    return {
+        "id": profile.id,
+        "handle": profile.handle,
+        "display_name": profile.display_name,
+        "is_public": profile.is_public,
+    }
+
+
+class CreateProfileBody(BaseModel):
+    handle: str
+    display_name: str | None = None
+
+
+@app.post("/v1/profile", tags=["profiles"])
+async def create_profile(
+    body: CreateProfileBody,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, str | bool | None]:
+    """Create the one profile row for a newly authenticated subject that has none yet."""
+    repository: ProfileRepository | None = getattr(request.app.state, "profile_repository", None)
+    if repository is None:
+        try:
+            repository = SupabaseProfileRepository(SupabaseServiceSettings.from_environment())
+        except RepositoryUnavailableError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Profile service is unavailable",
+            ) from error
+
+    try:
+        profile = await repository.create_own_profile(tenant, body.handle, body.display_name)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Profile service is unavailable",
+        ) from error
     return {
         "id": profile.id,
         "handle": profile.handle,
@@ -362,3 +505,210 @@ async def register_github_webhook(
         "github_repository_id": subscription.github_repository_id,
         "github_hook_id": subscription.github_hook_id,
     }
+
+
+@app.get("/v1/claims", tags=["claims"])
+async def list_claims(
+    request: Request,
+    review: str | None = None,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, list[dict[str, object]]]:
+    """Return claim revisions for the review dashboard. Only review=pending is supported."""
+    if review != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only review=pending is supported",
+        )
+    repository = get_claim_repository(request)
+    try:
+        claims = await repository.list_pending(tenant.profile_id)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Claims service is unavailable",
+        ) from error
+    return {"claims": list(claims)}
+
+
+class ReviewDecisionBody(BaseModel):
+    note: str | None = None
+
+
+@app.post("/v1/claim-revisions/{claim_revision_id}/approve", tags=["claims"])
+async def approve_claim_revision(
+    claim_revision_id: str,
+    body: ReviewDecisionBody,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, str]:
+    """Ordinary audited human transition. Never agent-driven."""
+    service = ReviewDecisionService(get_review_repository(request), get_claim_repository(request))
+    try:
+        decision_id = await service.record(
+            tenant.profile_id,
+            claim_revision_id,
+            ReviewStatus.APPROVED,
+            actor_user_id=user.id,
+            note=body.note,
+        )
+    except TransitionError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Review service is unavailable",
+        ) from error
+    return {"review_decision_id": decision_id}
+
+
+@app.post("/v1/claim-revisions/{claim_revision_id}/reject", tags=["claims"])
+async def reject_claim_revision(
+    claim_revision_id: str,
+    body: ReviewDecisionBody,
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, str]:
+    """Ordinary audited human transition. Never agent-driven."""
+    service = ReviewDecisionService(get_review_repository(request), get_claim_repository(request))
+    try:
+        decision_id = await service.record(
+            tenant.profile_id,
+            claim_revision_id,
+            ReviewStatus.REJECTED,
+            actor_user_id=user.id,
+            note=body.note,
+        )
+    except TransitionError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Review service is unavailable",
+        ) from error
+    return {"review_decision_id": decision_id}
+
+
+class EditClaimRevisionBody(BaseModel):
+    claim_id: str
+    category: str
+    statement: str
+
+
+@app.post("/v1/claim-revisions/{claim_revision_id}/edit", tags=["claims"])
+async def edit_claim_revision(
+    claim_revision_id: str,
+    body: EditClaimRevisionBody,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, str | int]:
+    """Editing a claim revision never mutates it: it creates the next immutable revision."""
+    service = ReviewDecisionService(get_review_repository(request), get_claim_repository(request))
+    try:
+        record = await service.edit(
+            tenant.profile_id,
+            body.claim_id,
+            claim_revision_id,
+            body.category,
+            body.statement,
+        )
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Claims service is unavailable",
+        ) from error
+    return {
+        "claim_id": record.claim_id,
+        "claim_revision_id": record.claim_revision_id,
+        "revision_number": record.revision_number,
+    }
+
+
+@app.post("/v1/claim-revisions/{claim_revision_id}/publish", tags=["claims"])
+async def publish_claim_revision(
+    claim_revision_id: str,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, str]:
+    """Only succeeds once the claim revision is verified and approved with current evidence."""
+    repository = get_publication_repository(request)
+    try:
+        publication_context = await repository.get_publication_context(
+            tenant.profile_id,
+            claim_revision_id,
+        )
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Publication service is unavailable",
+        ) from error
+
+    verification_decision_id = publication_context.get("verification_decision_id")
+    verification_status_value = publication_context.get("verification_status")
+    review_decision_id = publication_context.get("review_decision_id")
+    review_status_value = publication_context.get("review_status")
+    evidence_version_ids = publication_context.get("evidence_version_ids") or []
+    evidence_validity_values = publication_context.get("evidence_validity") or []
+    source_artifact_ids = publication_context.get("source_artifact_ids") or []
+
+    if not isinstance(verification_decision_id, str) or not isinstance(verification_status_value, str):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Claim revision has no verification decision",
+        )
+
+    published_at = datetime.now(timezone.utc).isoformat()
+    service = PublicationService(repository)
+    try:
+        publication_id = await service.publish(
+            tenant.profile_id,
+            PublicationContext(
+                claim_revision_id=claim_revision_id,
+                verification_decision_id=verification_decision_id,
+                review_decision_id=review_decision_id if isinstance(review_decision_id, str) else None,
+                request=PublicationRequest(
+                    claim_revision_id=claim_revision_id,
+                    verification_status=VerificationStatus(verification_status_value),
+                    review_status=(
+                        ReviewStatus(review_status_value)
+                        if isinstance(review_status_value, str)
+                        else ReviewStatus.NOT_REQUIRED
+                    ),
+                    evidence_version_ids=frozenset(evidence_version_ids),
+                    evidence_validity=frozenset(
+                        EvidenceValidity(value) for value in evidence_validity_values
+                    ),
+                    source_artifact_ids=frozenset(source_artifact_ids),
+                ),
+            ),
+            published_at=published_at,
+        )
+    except ProvenanceError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Publication service is unavailable",
+        ) from error
+    return {"publication_id": publication_id}
+
+
+@app.get("/v1/runs/{run_id}", tags=["runs"])
+async def get_run(
+    run_id: str,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, object]:
+    """Expose agent-run progress and outcome, scoped to the caller's tenant."""
+    repository = get_agent_run_repository(request)
+    try:
+        run = await repository.get(tenant.profile_id, run_id)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent run service is unavailable",
+        ) from error
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    return run

@@ -43,7 +43,7 @@ def test_worker_claims_one_run_through_server_only_rpc():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/rest/v1/rpc/claim_ingestion_run"
         assert request.headers["apikey"] == "server-only-key"
-        assert request.headers.get("authorization") is None
+        assert request.headers.get("authorization") == "Bearer server-only-key"
         return httpx.Response(200, json=lease_payload())
 
     lease = asyncio.run(repository(handler).claim(WORKER_ID, lease_seconds=120))

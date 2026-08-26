@@ -13,9 +13,11 @@ class FakeJobs:
     def __init__(self, lease: IngestionRunLease | None) -> None:
         self.lease = lease
         self.completed: tuple[IngestionRunLease, IngestionStatus, str | None] | None = None
+        self.claimed_with_lease_seconds: int | None = None
 
     async def claim(self, worker_id: str, lease_seconds: int = 60) -> IngestionRunLease | None:
         assert worker_id == "worker-1"
+        self.claimed_with_lease_seconds = lease_seconds
         return self.lease
 
     async def complete(self, lease, status, error_summary=None) -> None:
@@ -79,6 +81,16 @@ def test_worker_claims_ingests_and_completes_a_github_run():
     assert result.status is IngestionStatus.SUCCEEDED
     assert jobs.completed is not None
     assert jobs.completed[1] is IngestionStatus.SUCCEEDED
+
+
+def test_worker_defaults_to_a_lease_long_enough_for_a_real_repository():
+    # A real repository's full history can take well over a minute to
+    # collect; a short lease expires mid-run and fails the terminal
+    # complete_ingestion_run call. Found via live testing.
+    jobs = FakeJobs(lease())
+    asyncio.run(GitHubIngestionWorker(jobs, evidence_service()).run_once("worker-1"))
+
+    assert jobs.claimed_with_lease_seconds == 300
 
 
 def test_worker_reports_no_work_without_completion():

@@ -37,8 +37,12 @@ class GitHubIngestionWorker:
         self._job_repository = job_repository
         self._evidence_service = evidence_service
 
-    async def run_once(self, worker_id: str) -> GitHubWorkerResult:
-        lease = await self._job_repository.claim(worker_id)
+    async def run_once(self, worker_id: str, lease_seconds: int = 300) -> GitHubWorkerResult:
+        # A real repository's full commit/PR/release history can take well
+        # over the old 60s default to collect; found via live testing when a
+        # real ingestion run's lease expired mid-collection and its terminal
+        # complete_ingestion_run call failed as "not actively leased".
+        lease = await self._job_repository.claim(worker_id, lease_seconds)
         if lease is None:
             return GitHubWorkerResult(run_id=None, status=None)
         if lease.connection_id is None:

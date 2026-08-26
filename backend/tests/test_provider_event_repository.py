@@ -51,7 +51,7 @@ def test_provider_event_repository_derives_profile_from_tenant():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/rest/v1/rpc/record_provider_event"
         assert request.headers["apikey"] == "server-only-key"
-        assert request.headers.get("authorization") is None
+        assert request.headers.get("authorization") == "Bearer server-only-key"
         body = json.loads(request.content)
         assert body["p_profile_id"] == PROFILE_ID
         assert body["p_connection_id"] == CONNECTION_ID

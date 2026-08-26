@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Callable, Protocol
 
 from devstacks_domain import (
+    AgentRunRepository,
     EvidenceVersionOutcome,
     FernetTokenCipher,
     IngestionStatus,
@@ -57,11 +58,13 @@ class GitHubEvidenceIngestionService:
         token_cipher: FernetTokenCipher,
         collector_factory: Callable[[str], GitHubEvidenceCollector] = GitHubEvidenceCollector,
         revalidation_service: TargetedRevalidationService | None = None,
+        agent_run_repository: AgentRunRepository | None = None,
     ) -> None:
         self._repository = repository
         self._token_cipher = token_cipher
         self._collector_factory = collector_factory
         self._revalidation_service = revalidation_service
+        self._agent_run_repository = agent_run_repository
 
     async def ingest(self, profile_id: str, connection_id: str) -> GitHubIngestionResult:
         encrypted_token = await self._repository.get_access_token_encrypted(
@@ -90,6 +93,16 @@ class GitHubEvidenceIngestionService:
                         profile_id,
                         write.source_artifact_id,
                         write.evidence_version_id,
+                    )
+                if self._agent_run_repository is not None:
+                    # Cheap, synchronous queue write only — the LLM extraction
+                    # itself runs later, out-of-band, in devstacks-claims-worker.
+                    # Keeps ingestion's short lease window off the LLM latency path.
+                    await self._agent_run_repository.enqueue(
+                        profile_id,
+                        write.source_artifact_id,
+                        write.evidence_version_id,
+                        f"claim-extraction:{write.evidence_version_id}",
                     )
             else:
                 no_op_versions += 1

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 const stages = ["Source", "Evidence", "Claim Revision", "Verification", "Profile"];
 
 export default function HomePage() {
@@ -9,6 +11,9 @@ export default function HomePage() {
         <p className="summary">
           A reviewable public profile built from immutable source evidence, not inferred biography.
         </p>
+        <Link href="/login" className="github-button" style={{ display: "inline-block", marginTop: 24 }}>
+          Sign in
+        </Link>
       </section>
 
       <section className="flow" aria-label="Evidence lifecycle">
@@ -21,8 +26,8 @@ export default function HomePage() {
       </section>
 
       <section className="status" aria-label="Implementation status">
-        <p>Foundation in progress</p>
-        <strong>GitHub evidence path is next.</strong>
+        <p>Golden path live</p>
+        <strong>GitHub evidence is verified end to end.</strong>
       </section>
     </main>
   );

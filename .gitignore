@@ -13,6 +13,7 @@ __pycache__/
 # Node.js / Next.js
 node_modules/
 .next/
+*.tsbuildinfo
 
 # Editor and OS files
 .DS_Store

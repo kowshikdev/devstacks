@@ -56,7 +56,7 @@ def test_audit_repository_derives_profile_from_tenant_and_appends_event():
         body = json.loads(request.content)
         assert body["profile_id"] == PROFILE_ID
         assert body["idempotency_key"] == draft().idempotency_key
-        assert "authorization" not in request.headers
+        assert request.headers["authorization"] == "Bearer server-only-key"
         return httpx.Response(201, json=record_json())
 
     record = asyncio.run(repository(handler).record(TenantContext(PROFILE_ID), draft()))

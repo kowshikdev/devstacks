@@ -15,7 +15,7 @@ from devstacks_domain import TenantContext
 def test_profile_repository_reads_only_the_authenticated_tenant():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["apikey"] == "server-only-key"
-        assert "authorization" not in request.headers
+        assert request.headers["authorization"] == "Bearer server-only-key"
         assert request.url.params["id"] == "eq.profile-1"
         assert request.url.params["select"] == "id,handle,display_name,is_public"
         return httpx.Response(
@@ -91,3 +91,58 @@ def test_profile_repository_does_not_return_data_for_api_failure():
 
     with pytest.raises(RepositoryUnavailableError):
         asyncio.run(repository.get_own_profile(TenantContext("profile-1")))
+
+
+def test_profile_repository_creates_a_profile_for_the_authenticated_tenant():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/rest/v1/rpc/create_own_profile"
+        body = json.loads(request.content)
+        assert body == {
+            "p_profile_id": "profile-1",
+            "p_handle": "devstacks",
+            "p_display_name": "Dev Stacks",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "id": "profile-1",
+                "handle": "devstacks",
+                "display_name": "Dev Stacks",
+                "is_public": False,
+            },
+        )
+
+    repository = SupabaseProfileRepository(
+        SupabaseServiceSettings(
+            url="https://project.supabase.co",
+            service_role_key="server-only-key",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    profile = asyncio.run(
+        repository.create_own_profile(TenantContext("profile-1"), "devstacks", "Dev Stacks")
+    )
+
+    assert profile.id == "profile-1"
+    assert profile.handle == "devstacks"
+
+
+def test_profile_repository_rejects_a_creation_response_outside_tenant_scope():
+    repository = SupabaseProfileRepository(
+        SupabaseServiceSettings(
+            url="https://project.supabase.co",
+            service_role_key="server-only-key",
+        ),
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"id": "someone-else", "handle": "devstacks", "is_public": False},
+            )
+        ),
+    )
+
+    with pytest.raises(RepositoryUnavailableError, match="scope"):
+        asyncio.run(
+            repository.create_own_profile(TenantContext("profile-1"), "devstacks", None)
+        )

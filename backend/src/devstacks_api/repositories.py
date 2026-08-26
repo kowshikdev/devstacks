@@ -10,8 +10,15 @@ from devstacks_domain import TenantContext
 from devstacks_domain import IngestionStatus
 from devstacks_domain import (
     AffectedClaimRevision,
+    AgentRunLease,
+    CandidateClaimRevision,
+    ClaimEvidenceLinkDraft,
+    ClaimRevisionRecord,
     FreshnessAssessmentDraft,
+    PublicationStatus,
     RevalidationRepository,
+    ReviewStatus,
+    VerificationStatus,
 )
 
 from .github_oauth import (
@@ -65,6 +72,14 @@ class PublishedProfile:
 class ProfileRepository(Protocol):
     async def get_own_profile(self, tenant: TenantContext) -> ProfileSummary | None:
         """Return the profile for exactly one authenticated tenant."""
+
+    async def create_own_profile(
+        self,
+        tenant: TenantContext,
+        handle: str,
+        display_name: str | None,
+    ) -> ProfileSummary:
+        """Create the one profile row for an authenticated subject that has none yet."""
 
 
 class PublicProfileRepository(Protocol):
@@ -164,7 +179,10 @@ class SupabaseProfileRepository:
         try:
             async with httpx.AsyncClient(
                 base_url=self._settings.url,
-                headers={"apikey": self._settings.service_role_key},
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
                 timeout=5.0,
                 transport=self._transport,
             ) as client:
@@ -206,6 +224,63 @@ class SupabaseProfileRepository:
             is_public=is_public,
         )
 
+    async def create_own_profile(
+        self,
+        tenant: TenantContext,
+        handle: str,
+        display_name: str | None,
+    ) -> ProfileSummary:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(
+                    "/rest/v1/rpc/create_own_profile",
+                    json={
+                        "p_profile_id": tenant.profile_id,
+                        "p_handle": handle,
+                        "p_display_name": display_name,
+                    },
+                )
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase profile creation failed") from error
+
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase profile creation failed")
+
+        record = response.json()
+        if isinstance(record, list):
+            if len(record) != 1:
+                raise RepositoryUnavailableError("Supabase profile creation response is invalid")
+            record = record[0]
+        if not isinstance(record, dict):
+            raise RepositoryUnavailableError("Supabase profile creation response is invalid")
+
+        profile_id = record.get("id")
+        response_handle = record.get("handle")
+        is_public = record.get("is_public")
+        if (
+            not isinstance(profile_id, str)
+            or not isinstance(response_handle, str)
+            or profile_id != tenant.profile_id
+            or not isinstance(is_public, bool)
+        ):
+            raise RepositoryUnavailableError("Supabase profile creation response violates tenant scope")
+
+        response_display_name = record.get("display_name")
+        return ProfileSummary(
+            id=profile_id,
+            handle=response_handle,
+            display_name=response_display_name if isinstance(response_display_name, str) else None,
+            is_public=is_public,
+        )
+
 
 class SupabasePublicProfileRepository:
     """Server-only reader for the narrowly scoped public profile projection."""
@@ -224,7 +299,10 @@ class SupabasePublicProfileRepository:
         try:
             async with httpx.AsyncClient(
                 base_url=self._settings.url,
-                headers={"apikey": self._settings.service_role_key},
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
                 timeout=5.0,
                 transport=self._transport,
             ) as client:
@@ -316,6 +394,7 @@ class SupabaseAuditRepository:
                 base_url=self._settings.url,
                 headers={
                     "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
                     "Prefer": "return=representation",
                 },
                 timeout=5.0,
@@ -439,7 +518,10 @@ class SupabaseIngestionJobRepository:
         try:
             async with httpx.AsyncClient(
                 base_url=self._settings.url,
-                headers={"apikey": self._settings.service_role_key},
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
                 timeout=5.0,
                 transport=self._transport,
             ) as client:
@@ -510,7 +592,10 @@ class SupabaseProviderEventRepository:
         try:
             async with httpx.AsyncClient(
                 base_url=self._settings.url,
-                headers={"apikey": self._settings.service_role_key},
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
                 timeout=5.0,
                 transport=self._transport,
             ) as client:
@@ -652,7 +737,10 @@ class SupabaseGitHubAuthorizationRepository(GitHubAuthorizationRepository):
         try:
             async with httpx.AsyncClient(
                 base_url=self._settings.url,
-                headers={"apikey": self._settings.service_role_key},
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
                 timeout=5.0,
                 transport=self._transport,
             ) as client:
@@ -752,7 +840,10 @@ class SupabaseGitHubEvidenceRepository(GitHubEvidenceRepository):
         try:
             async with httpx.AsyncClient(
                 base_url=self._settings.url,
-                headers={"apikey": self._settings.service_role_key},
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
                 timeout=10.0,
                 transport=self._transport,
             ) as client:
@@ -861,7 +952,10 @@ class SupabaseGitHubWebhookRepository(GitHubWebhookRepository):
         try:
             async with httpx.AsyncClient(
                 base_url=self._settings.url,
-                headers={"apikey": self._settings.service_role_key},
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
                 timeout=5.0,
                 transport=self._transport,
             ) as client:
@@ -959,7 +1053,10 @@ class SupabaseRevalidationRepository(RevalidationRepository):
         try:
             async with httpx.AsyncClient(
                 base_url=self._settings.url,
-                headers={"apikey": self._settings.service_role_key},
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
                 timeout=5.0,
                 transport=self._transport,
             ) as client:
@@ -975,6 +1072,556 @@ class SupabaseRevalidationRepository(RevalidationRepository):
             return response.json()
         except ValueError as error:
             raise RepositoryUnavailableError("Supabase revalidation RPC response is invalid") from error
+
+    @staticmethod
+    def _one_record(payload: object, error_message: str) -> dict[str, object]:
+        if isinstance(payload, list):
+            if len(payload) != 1:
+                raise RepositoryUnavailableError(error_message)
+            payload = payload[0]
+        if not isinstance(payload, dict):
+            raise RepositoryUnavailableError(error_message)
+        return payload
+
+
+class SupabaseClaimRepository:
+    """Server-only adapter for claim-revision creation and evidence-link reads."""
+
+    def __init__(
+        self,
+        settings: SupabaseServiceSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def create_claim_revision(
+        self,
+        profile_id: str,
+        candidate: CandidateClaimRevision,
+    ) -> ClaimRevisionRecord:
+        payload = await self._call_rpc(
+            "create_claim_revision",
+            {
+                "p_profile_id": profile_id,
+                "p_claim_id": candidate.claim_id,
+                "p_category": candidate.category,
+                "p_statement": candidate.statement,
+                "p_valid_from": candidate.valid_from,
+                "p_valid_until": candidate.valid_until,
+                "p_evidence_links": [
+                    {"evidence_version_id": link.evidence_version_id, "relation": link.relation}
+                    for link in candidate.evidence_links
+                ],
+            },
+        )
+        record = self._one_record(payload, "Supabase claim revision response is invalid")
+        claim_id = record.get("claim_id")
+        claim_revision_id = record.get("claim_revision_id")
+        revision_number = record.get("revision_number")
+        if (
+            not isinstance(claim_id, str)
+            or not isinstance(claim_revision_id, str)
+            or not isinstance(revision_number, int)
+        ):
+            raise RepositoryUnavailableError("Supabase claim revision response is incomplete")
+        return ClaimRevisionRecord(
+            claim_id=claim_id,
+            claim_revision_id=claim_revision_id,
+            revision_number=revision_number,
+        )
+
+    async def get_evidence_links(
+        self,
+        profile_id: str,
+        claim_revision_id: str,
+    ) -> tuple[ClaimEvidenceLinkDraft, ...]:
+        payload = await self._call_rpc(
+            "get_claim_revision_evidence_links",
+            {"p_profile_id": profile_id, "p_claim_revision_id": claim_revision_id},
+        )
+        if not isinstance(payload, list):
+            raise RepositoryUnavailableError("Supabase evidence link response is invalid")
+        links = []
+        for record in payload:
+            if not isinstance(record, dict):
+                raise RepositoryUnavailableError("Supabase evidence link response is invalid")
+            evidence_version_id = record.get("evidence_version_id")
+            relation = record.get("relation")
+            if not isinstance(evidence_version_id, str) or not isinstance(relation, str):
+                raise RepositoryUnavailableError("Supabase evidence link response is incomplete")
+            links.append(ClaimEvidenceLinkDraft(evidence_version_id=evidence_version_id, relation=relation))
+        return tuple(links)
+
+    async def get_evidence_version(
+        self,
+        profile_id: str,
+        evidence_version_id: str,
+    ) -> dict[str, object] | None:
+        payload = await self._call_rpc(
+            "get_evidence_version",
+            {"p_profile_id": profile_id, "p_evidence_version_id": evidence_version_id},
+        )
+        if payload == [] or payload is None:
+            return None
+        return self._one_record(payload, "Supabase evidence version response is invalid")
+
+    async def list_pending(self, profile_id: str) -> tuple[dict[str, object], ...]:
+        payload = await self._call_rpc(
+            "list_pending_claim_revisions",
+            {"p_profile_id": profile_id},
+        )
+        if not isinstance(payload, list):
+            raise RepositoryUnavailableError("Supabase pending claims response is invalid")
+        for record in payload:
+            if not isinstance(record, dict):
+                raise RepositoryUnavailableError("Supabase pending claims response is invalid")
+        return tuple(payload)
+
+    async def _call_rpc(self, name: str, payload: dict[str, object]) -> object:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(f"/rest/v1/rpc/{name}", json=payload)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase claims RPC failed") from error
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase claims RPC failed")
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as error:
+            raise RepositoryUnavailableError("Supabase claims RPC response is invalid") from error
+
+    @staticmethod
+    def _one_record(payload: object, error_message: str) -> dict[str, object]:
+        if isinstance(payload, list):
+            if len(payload) != 1:
+                raise RepositoryUnavailableError(error_message)
+            payload = payload[0]
+        if not isinstance(payload, dict):
+            raise RepositoryUnavailableError(error_message)
+        return payload
+
+
+class SupabaseVerificationRepository:
+    """Server-only adapter for verification-decision reads and appends."""
+
+    def __init__(
+        self,
+        settings: SupabaseServiceSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def get_current_verification_status(
+        self,
+        profile_id: str,
+        claim_revision_id: str,
+    ) -> VerificationStatus:
+        payload = await self._call_rpc(
+            "get_latest_verification_status",
+            {"p_profile_id": profile_id, "p_claim_revision_id": claim_revision_id},
+        )
+        status = self._scalar(payload)
+        if status is None:
+            return VerificationStatus.UNVERIFIED
+        return VerificationStatus(status)
+
+    async def record_verification_decision(
+        self,
+        profile_id: str,
+        claim_revision_id: str,
+        status: VerificationStatus,
+        verifier_score: float | None,
+        agent_run_id: str | None,
+        rationale: str | None,
+    ) -> str:
+        payload = await self._call_rpc(
+            "record_verification_decision",
+            {
+                "p_profile_id": profile_id,
+                "p_claim_revision_id": claim_revision_id,
+                "p_status": status.value,
+                "p_verifier_score": verifier_score,
+                "p_agent_run_id": agent_run_id,
+                "p_rationale": rationale,
+            },
+        )
+        record = self._one_record(payload, "Supabase verification decision response is invalid")
+        decision_id = record.get("id")
+        if not isinstance(decision_id, str):
+            raise RepositoryUnavailableError("Supabase verification decision response is incomplete")
+        return decision_id
+
+    async def _call_rpc(self, name: str, payload: dict[str, object]) -> object:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(f"/rest/v1/rpc/{name}", json=payload)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase verification RPC failed") from error
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase verification RPC failed")
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as error:
+            raise RepositoryUnavailableError("Supabase verification RPC response is invalid") from error
+
+    @staticmethod
+    def _scalar(payload: object) -> object:
+        if isinstance(payload, list):
+            if len(payload) == 0:
+                return None
+            if len(payload) != 1:
+                raise RepositoryUnavailableError("Supabase verification status response is invalid")
+            return payload[0]
+        return payload
+
+    @staticmethod
+    def _one_record(payload: object, error_message: str) -> dict[str, object]:
+        if isinstance(payload, list):
+            if len(payload) != 1:
+                raise RepositoryUnavailableError(error_message)
+            payload = payload[0]
+        if not isinstance(payload, dict):
+            raise RepositoryUnavailableError(error_message)
+        return payload
+
+
+class SupabaseReviewRepository:
+    """Server-only adapter for review-decision reads and appends."""
+
+    def __init__(
+        self,
+        settings: SupabaseServiceSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def get_current_review_status(
+        self,
+        profile_id: str,
+        claim_revision_id: str,
+    ) -> ReviewStatus:
+        payload = await self._call_rpc(
+            "get_latest_review_status",
+            {"p_profile_id": profile_id, "p_claim_revision_id": claim_revision_id},
+        )
+        status = self._scalar(payload)
+        if status is None:
+            return ReviewStatus.PENDING
+        return ReviewStatus(status)
+
+    async def record_review_decision(
+        self,
+        profile_id: str,
+        claim_revision_id: str,
+        status: ReviewStatus,
+        actor_user_id: str,
+        note: str | None,
+    ) -> str:
+        payload = await self._call_rpc(
+            "record_review_decision",
+            {
+                "p_profile_id": profile_id,
+                "p_claim_revision_id": claim_revision_id,
+                "p_status": status.value,
+                "p_actor_user_id": actor_user_id,
+                "p_note": note,
+            },
+        )
+        record = self._one_record(payload, "Supabase review decision response is invalid")
+        decision_id = record.get("id")
+        if not isinstance(decision_id, str):
+            raise RepositoryUnavailableError("Supabase review decision response is incomplete")
+        return decision_id
+
+    async def _call_rpc(self, name: str, payload: dict[str, object]) -> object:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(f"/rest/v1/rpc/{name}", json=payload)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase review RPC failed") from error
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase review RPC failed")
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as error:
+            raise RepositoryUnavailableError("Supabase review RPC response is invalid") from error
+
+    @staticmethod
+    def _scalar(payload: object) -> object:
+        if isinstance(payload, list):
+            if len(payload) == 0:
+                return None
+            if len(payload) != 1:
+                raise RepositoryUnavailableError("Supabase review status response is invalid")
+            return payload[0]
+        return payload
+
+    @staticmethod
+    def _one_record(payload: object, error_message: str) -> dict[str, object]:
+        if isinstance(payload, list):
+            if len(payload) != 1:
+                raise RepositoryUnavailableError(error_message)
+            payload = payload[0]
+        if not isinstance(payload, dict):
+            raise RepositoryUnavailableError(error_message)
+        return payload
+
+
+class SupabasePublicationRepository:
+    """Server-only adapter for provenance-guarded publication writes."""
+
+    def __init__(
+        self,
+        settings: SupabaseServiceSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def record_publication(
+        self,
+        profile_id: str,
+        claim_revision_id: str,
+        verification_decision_id: str,
+        review_decision_id: str | None,
+        policy_version_id: str | None,
+        status: PublicationStatus,
+        published_at: str | None,
+        withdrawn_at: str | None,
+    ) -> str:
+        payload = await self._call_rpc(
+            "record_publication",
+            {
+                "p_profile_id": profile_id,
+                "p_claim_revision_id": claim_revision_id,
+                "p_verification_decision_id": verification_decision_id,
+                "p_review_decision_id": review_decision_id,
+                "p_policy_version_id": policy_version_id,
+                "p_status": status.value,
+                "p_published_at": published_at,
+                "p_withdrawn_at": withdrawn_at,
+            },
+        )
+        record = self._one_record(payload, "Supabase publication response is invalid")
+        publication_id = record.get("id")
+        if not isinstance(publication_id, str):
+            raise RepositoryUnavailableError("Supabase publication response is incomplete")
+        return publication_id
+
+    async def get_publication_context(
+        self,
+        profile_id: str,
+        claim_revision_id: str,
+    ) -> dict[str, object]:
+        payload = await self._call_rpc(
+            "get_claim_revision_publication_context",
+            {"p_profile_id": profile_id, "p_claim_revision_id": claim_revision_id},
+        )
+        return self._one_record(payload, "Supabase publication context response is invalid")
+
+    async def _call_rpc(self, name: str, payload: dict[str, object]) -> object:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(f"/rest/v1/rpc/{name}", json=payload)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase publication RPC failed") from error
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase publication RPC failed")
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as error:
+            raise RepositoryUnavailableError("Supabase publication RPC response is invalid") from error
+
+    @staticmethod
+    def _one_record(payload: object, error_message: str) -> dict[str, object]:
+        if isinstance(payload, list):
+            if len(payload) != 1:
+                raise RepositoryUnavailableError(error_message)
+            payload = payload[0]
+        if not isinstance(payload, dict):
+            raise RepositoryUnavailableError(error_message)
+        return payload
+
+
+class SupabaseAgentRunRepository:
+    """Server-only adapter for lease-based agent-run queueing and completion."""
+
+    def __init__(
+        self,
+        settings: SupabaseServiceSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def enqueue(
+        self,
+        profile_id: str,
+        source_artifact_id: str,
+        evidence_version_id: str,
+        idempotency_key: str,
+    ) -> str:
+        if not idempotency_key.strip():
+            raise ValueError("agent run idempotency key is required")
+        payload = await self._call_rpc(
+            "enqueue_claim_agent_run",
+            {
+                "p_profile_id": profile_id,
+                "p_source_artifact_id": source_artifact_id,
+                "p_evidence_version_id": evidence_version_id,
+                "p_idempotency_key": idempotency_key,
+            },
+        )
+        record = self._one_record(payload, "Supabase agent run queue response is invalid")
+        run_id = record.get("id")
+        if not isinstance(run_id, str):
+            raise RepositoryUnavailableError("Supabase agent run queue response is incomplete")
+        return run_id
+
+    async def claim(self, worker_id: str, lease_seconds: int = 300) -> AgentRunLease | None:
+        if not worker_id.strip():
+            raise ValueError("worker id is required")
+        if not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease seconds must be between 1 and 3600")
+        payload = await self._call_rpc(
+            "claim_agent_run",
+            {"p_worker_id": worker_id, "p_lease_seconds": lease_seconds},
+        )
+        if payload is None:
+            return None
+        return self._parse_lease(payload, worker_id)
+
+    async def complete(
+        self,
+        lease: AgentRunLease,
+        status: str,
+        error_summary: str | None = None,
+    ) -> None:
+        if status not in {"succeeded", "failed", "interrupted"}:
+            raise ValueError("agent run completion status must be terminal")
+        payload = await self._call_rpc(
+            "complete_agent_run",
+            {
+                "p_run_id": lease.id,
+                "p_worker_id": lease.lease_owner,
+                "p_status": status,
+                "p_error_summary": error_summary,
+            },
+        )
+        if not isinstance(payload, dict) or payload.get("id") != lease.id:
+            raise RepositoryUnavailableError("Supabase agent run completion response is invalid")
+
+    async def get(self, profile_id: str, run_id: str) -> dict[str, object] | None:
+        payload = await self._call_rpc(
+            "get_agent_run",
+            {"p_profile_id": profile_id, "p_run_id": run_id},
+        )
+        if payload == [] or payload is None:
+            return None
+        return self._one_record(payload, "Supabase agent run response is invalid")
+
+    async def _call_rpc(self, name: str, payload: dict[str, object]) -> object:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(f"/rest/v1/rpc/{name}", json=payload)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase agent run RPC failed") from error
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase agent run RPC failed")
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as error:
+            raise RepositoryUnavailableError("Supabase agent run RPC response is invalid") from error
+
+    @staticmethod
+    def _parse_lease(payload: object, worker_id: str) -> AgentRunLease:
+        if isinstance(payload, list):
+            if len(payload) != 1:
+                raise RepositoryUnavailableError("Supabase agent run lease response is invalid")
+            payload = payload[0]
+        if not isinstance(payload, dict):
+            raise RepositoryUnavailableError("Supabase agent run lease response is invalid")
+
+        run_id = payload.get("id")
+        profile_id = payload.get("profile_id")
+        source_artifact_id = payload.get("source_artifact_id")
+        evidence_version_id = payload.get("evidence_version_id")
+        attempt_count = payload.get("attempt_count")
+        lease_owner = payload.get("lease_owner")
+        lease_expires_at = payload.get("lease_expires_at")
+        if (
+            not isinstance(run_id, str)
+            or not isinstance(profile_id, str)
+            or (source_artifact_id is not None and not isinstance(source_artifact_id, str))
+            or (evidence_version_id is not None and not isinstance(evidence_version_id, str))
+            or not isinstance(attempt_count, int)
+            or attempt_count < 1
+            or lease_owner != worker_id
+            or not isinstance(lease_expires_at, str)
+        ):
+            raise RepositoryUnavailableError("Supabase agent run lease response violates worker scope")
+        return AgentRunLease(
+            id=run_id,
+            profile_id=profile_id,
+            source_artifact_id=source_artifact_id,
+            evidence_version_id=evidence_version_id,
+            attempt_count=attempt_count,
+            lease_owner=lease_owner,
+            lease_expires_at=lease_expires_at,
+        )
 
     @staticmethod
     def _one_record(payload: object, error_message: str) -> dict[str, object]:

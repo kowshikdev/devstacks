@@ -36,7 +36,7 @@ def test_evidence_repository_reads_encrypted_token_only_through_scoped_rpc():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/rest/v1/rpc/get_github_connection_credential"
         assert request.headers["apikey"] == "server-only-key"
-        assert request.headers.get("authorization") is None
+        assert request.headers.get("authorization") == "Bearer server-only-key"
         assert json.loads(request.content) == {
             "p_profile_id": "profile-1",
             "p_connection_id": "connection-1",

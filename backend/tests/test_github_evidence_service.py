@@ -165,3 +165,64 @@ def test_evidence_service_skips_revalidation_for_a_no_op_write():
     asyncio.run(service.ingest("profile-1", "connection-1"))
 
     assert revalidation_repository.calls == []
+
+class FakeAgentRunRepository:
+    def __init__(self) -> None:
+        self.enqueued: list[tuple[str, str, str, str]] = []
+
+    async def enqueue(self, profile_id, source_artifact_id, evidence_version_id, idempotency_key):
+        self.enqueued.append((profile_id, source_artifact_id, evidence_version_id, idempotency_key))
+        return "run-1"
+
+    async def claim(self, worker_id, lease_seconds=300):
+        raise AssertionError("not used by the ingestion service")
+
+    async def complete(self, lease, status, error_summary=None):
+        raise AssertionError("not used by the ingestion service")
+
+    async def get(self, profile_id, run_id):
+        raise AssertionError("not used by the ingestion service")
+
+
+def test_evidence_service_enqueues_claim_extraction_for_each_created_version():
+    cipher = FernetTokenCipher(Fernet.generate_key().decode("ascii"))
+    repository = FakeRepository()
+    repository.encrypted_token = cipher.encrypt("raw-access-token")
+    repository.appended = []
+    repository.write_outcome = EvidenceVersionOutcome.CREATE_VERSION
+    agent_run_repository = FakeAgentRunRepository()
+    service = GitHubEvidenceIngestionService(
+        repository,
+        cipher,
+        collector_factory=lambda token: FakeCollector(
+            GitHubCollection((artifact(),), GitHubCollectionOutcome.SUCCEEDED)
+        ),
+        agent_run_repository=agent_run_repository,
+    )
+
+    asyncio.run(service.ingest("profile-1", "connection-1"))
+
+    assert agent_run_repository.enqueued == [
+        ("profile-1", "artifact-1", "version-1", "claim-extraction:version-1")
+    ]
+
+
+def test_evidence_service_does_not_enqueue_claim_extraction_for_a_no_op_write():
+    cipher = FernetTokenCipher(Fernet.generate_key().decode("ascii"))
+    repository = FakeRepository()
+    repository.encrypted_token = cipher.encrypt("raw-access-token")
+    repository.appended = []
+    repository.write_outcome = EvidenceVersionOutcome.NO_OP
+    agent_run_repository = FakeAgentRunRepository()
+    service = GitHubEvidenceIngestionService(
+        repository,
+        cipher,
+        collector_factory=lambda token: FakeCollector(
+            GitHubCollection((artifact(),), GitHubCollectionOutcome.SUCCEEDED)
+        ),
+        agent_run_repository=agent_run_repository,
+    )
+
+    asyncio.run(service.ingest("profile-1", "connection-1"))
+
+    assert agent_run_repository.enqueued == []

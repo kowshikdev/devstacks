@@ -39,7 +39,7 @@ def test_public_profile_repository_calls_only_the_server_projection_rpc():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/rest/v1/rpc/get_published_profile"
         assert request.headers["apikey"] == "server-only-key"
-        assert request.headers.get("authorization") is None
+        assert request.headers.get("authorization") == "Bearer server-only-key"
         assert json.loads(request.content) == {"p_handle": "devstacks"}
         return httpx.Response(200, json=[published_claim()])
 

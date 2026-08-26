@@ -15,10 +15,16 @@ class FakeVerifier:
 class FakeProfileRepository:
     def __init__(self, profile: ProfileSummary | None) -> None:
         self._profile = profile
+        self.created: list[tuple[str, str | None]] = []
 
     async def get_own_profile(self, tenant: TenantContext) -> ProfileSummary | None:
         assert tenant.profile_id == "profile-1"
         return self._profile
+
+    async def create_own_profile(self, tenant, handle, display_name) -> ProfileSummary:
+        assert tenant.profile_id == "profile-1"
+        self.created.append((handle, display_name))
+        return ProfileSummary(id="profile-1", handle=handle, display_name=display_name, is_public=False)
 
 
 class FakePublicProfileRepository:
@@ -91,6 +97,25 @@ def test_profile_endpoint_returns_not_found_without_a_profile():
         del app.state.profile_repository
 
     assert response.status_code == 404
+
+
+def test_create_profile_endpoint_creates_the_authenticated_tenants_profile():
+    app.state.access_token_verifier = FakeVerifier()
+    repository = FakeProfileRepository(None)
+    app.state.profile_repository = repository
+    try:
+        response = TestClient(app).post(
+            "/v1/profile",
+            headers={"Authorization": "Bearer user-access-token"},
+            json={"handle": "devstacks", "display_name": "Dev Stacks"},
+        )
+    finally:
+        del app.state.access_token_verifier
+        del app.state.profile_repository
+
+    assert response.status_code == 200
+    assert response.json()["handle"] == "devstacks"
+    assert repository.created == [("devstacks", "Dev Stacks")]
 
 
 def test_public_profile_endpoint_requires_no_bearer_token_and_projects_published_claims():

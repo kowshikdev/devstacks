@@ -29,7 +29,7 @@ def test_github_authorization_repository_creates_server_only_attempt():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/rest/v1/rpc/create_github_oauth_attempt"
         assert request.headers["apikey"] == "server-only-key"
-        assert request.headers.get("authorization") is None
+        assert request.headers.get("authorization") == "Bearer server-only-key"
         assert json.loads(request.content)["p_profile_id"] == PROFILE_ID
         return httpx.Response(200, json={"profile_id": PROFILE_ID})
 
