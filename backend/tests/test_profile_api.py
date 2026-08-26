@@ -307,6 +307,7 @@ def test_github_authorization_routes_start_authenticated_flow_and_complete_callb
         callback = TestClient(app).get(
             "/v1/connectors/github/callback",
             params={"state": "returned-state", "code": "returned-code"},
+            follow_redirects=False,
         )
     finally:
         del app.state.access_token_verifier
@@ -314,12 +315,23 @@ def test_github_authorization_routes_start_authenticated_flow_and_complete_callb
 
     assert start.status_code == 200
     assert start.json()["authorization_url"].startswith("https://github.com/")
-    assert callback.status_code == 200
-    assert callback.json() == {
-        "connection_id": "connection-1",
-        "source_subject_id": "subject-1",
-        "github_login": "octocat",
-    }
+    assert callback.status_code in (302, 307)
+    location = callback.headers["location"]
+    assert location.startswith("http://localhost:3000/dashboard/connect/github?")
+    assert "connected=1" in location
+    assert "github_login=octocat" in location
+    assert "connection_id=connection-1" in location
+
+
+def test_github_authorization_callback_redirects_with_an_error_on_denial():
+    response = TestClient(app).get(
+        "/v1/connectors/github/callback",
+        params={"error": "access_denied"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == "http://localhost:3000/dashboard/connect/github?error=denied"
 
 
 def test_github_sync_queues_an_authenticated_idempotent_ingestion_run():

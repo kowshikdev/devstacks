@@ -149,6 +149,13 @@ export async function beginGithubAuth(): Promise<string> {
   return result.authorization_url;
 }
 
+export async function syncGithubConnection(connectionId: string): Promise<{ run_id: string }> {
+  return request(`/v1/connectors/github/${encodeURIComponent(connectionId)}/sync`, {
+    method: "POST",
+    headers: { "Idempotency-Key": `${connectionId}-${Date.now()}` },
+  });
+}
+
 export async function getPendingClaims(): Promise<PendingClaimRevision[]> {
   const result = await request<{ claims: PendingClaimRevision[] }>("/v1/claims?review=pending");
   return result.claims;

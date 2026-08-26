@@ -2,9 +2,11 @@ from datetime import datetime, timezone
 from os import getenv
 from xml.sax.saxutils import escape as xml_escape
 
+from urllib.parse import urlencode
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
 from .auth import AuthenticatedUser, get_current_user, get_tenant_context
@@ -82,6 +84,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_frontend_url = getenv("DEVSTACKS_FRONTEND_URL", _allowed_origins[0] if _allowed_origins else "http://localhost:3000").rstrip("/")
 
 
 def get_github_oauth_service(request: Request) -> GitHubOAuthService:
@@ -542,31 +546,26 @@ async def complete_github_authorization(
     state: str | None = None,
     code: str | None = None,
     error: str | None = None,
-) -> dict[str, str]:
-    """Consume a GitHub OAuth callback state and bind the validated GitHub identity."""
+) -> RedirectResponse:
+    """Consume a GitHub OAuth callback state, bind the validated GitHub identity, and
+    hand the browser back to the frontend (this endpoint is hit directly by GitHub's
+    redirect, never by the frontend itself)."""
+    connect_url = f"{_frontend_url}/dashboard/connect/github"
+
     if error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="GitHub authorization was denied",
-        )
+        return RedirectResponse(f"{connect_url}?{urlencode({'error': 'denied'})}")
+
     service = get_github_oauth_service(request)
     try:
         connection = await service.complete(state or "", code or "")
-    except GitHubOAuthError as oauth_error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="GitHub authorization could not be completed",
-        ) from oauth_error
-    except (GitHubOAuthUnavailableError, RepositoryUnavailableError) as oauth_error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="GitHub connector service is unavailable",
-        ) from oauth_error
-    return {
-        "connection_id": connection.id,
-        "source_subject_id": connection.source_subject_id,
-        "github_login": connection.login,
-    }
+    except GitHubOAuthError:
+        return RedirectResponse(f"{connect_url}?{urlencode({'error': 'invalid'})}")
+    except (GitHubOAuthUnavailableError, RepositoryUnavailableError):
+        return RedirectResponse(f"{connect_url}?{urlencode({'error': 'unavailable'})}")
+
+    return RedirectResponse(
+        f"{connect_url}?{urlencode({'connected': '1', 'github_login': connection.login, 'connection_id': connection.id})}"
+    )
 
 
 @app.post("/v1/connectors/github/{connection_id}/sync", tags=["github"])
