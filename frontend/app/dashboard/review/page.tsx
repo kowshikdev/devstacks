@@ -123,12 +123,14 @@ export default function ReviewDashboardPage() {
             ) : (
               <div className="review-actions">
                 <button
+                  className="btn-primary"
                   disabled={busyId === claim.claim_revision_id}
                   onClick={() => withBusy(claim.claim_revision_id, () => approveClaimRevision(claim.claim_revision_id))}
                 >
                   Approve
                 </button>
                 <button
+                  className="btn-danger"
                   disabled={busyId === claim.claim_revision_id}
                   onClick={() => withBusy(claim.claim_revision_id, () => rejectClaimRevision(claim.claim_revision_id))}
                 >
@@ -144,6 +146,7 @@ export default function ReviewDashboardPage() {
                   Edit
                 </button>
                 <button
+                  className="btn-primary"
                   disabled={busyId === claim.claim_revision_id}
                   onClick={() => withBusy(claim.claim_revision_id, () => publishClaimRevision(claim.claim_revision_id))}
                 >

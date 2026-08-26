@@ -63,7 +63,9 @@ a {
 .review-card,
 .terminal,
 .badge,
-.topbar {
+.topbar,
+.flow,
+.status {
   position: relative;
   overflow: hidden;
   background: var(--glass);
@@ -77,7 +79,9 @@ a {
 .review-card::before,
 .terminal::before,
 .badge::before,
-.topbar::before {
+.topbar::before,
+.flow::before,
+.status::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -168,7 +172,6 @@ h1 em {
 }
 
 .kbd {
-  margin-left: 10px;
   padding: 1px 6px;
   border-radius: 4px;
   border: 1px solid rgba(4, 20, 13, 0.35);
@@ -273,14 +276,13 @@ h1 em {
 .flow {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 
 .stage {
   display: grid;
   gap: 18px;
-  min-height: 150px;
+  min-height: 140px;
   padding: 22px 16px;
   border-right: 1px solid var(--border);
 }
@@ -297,9 +299,12 @@ h1 em {
 }
 
 .status {
-  display: grid;
-  gap: 6px;
-  justify-items: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  width: fit-content;
+  padding: 12px 20px;
+  border-radius: var(--radius-lg);
 }
 
 .status p,
@@ -307,9 +312,14 @@ h1 em {
   margin: 0;
 }
 
+.status p {
+  margin: 0;
+}
+
 .status strong {
   color: var(--text-primary);
   font-weight: 500;
+  font-size: 0.92rem;
 }
 
 /* ---------- Shared primitives ---------- */
@@ -428,9 +438,10 @@ h1 em {
   font-size: clamp(1.8rem, 4vw, 2.4rem);
 }
 
-/* review/public claim lists reuse .dashboard's centered layout at a wider
-   measure, so widen it contextually when it holds a claim-list */
-.dashboard:has(.claim-list) {
+/* Explicit width modifier for pages whose content is wider than the default
+   centered auth column — never conditional on :has(), since a page whose
+   list populates after a client-side fetch would visibly jump width. */
+.dashboard--wide {
   max-width: 720px;
 }
 
@@ -603,6 +614,28 @@ h1 em {
   color: var(--text-primary);
 }
 
+.review-actions button.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
+.review-actions button.btn-primary:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.review-actions button.btn-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: transparent;
+}
+
+.review-actions button.btn-danger:hover {
+  background: rgba(248, 113, 113, 0.1);
+}
+
 .auth-form {
   display: grid;
   gap: 12px;
@@ -655,6 +688,11 @@ h1 em {
 
   .stage:last-child {
     border-bottom: 0;
+  }
+
+  .status {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .topbar {

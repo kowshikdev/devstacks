@@ -50,7 +50,7 @@ export default async function PublicProfilePage({ params }: PageProps) {
   const badgeMarkdown = `[![DevStacks](${badgeUrl})](${profileUrl})`;
 
   return (
-    <main className="dashboard">
+    <main className="dashboard dashboard--wide">
       <section className="intro">
         <p className="eyebrow">Public profile</p>
         <h1>{profile.display_name ?? profile.handle}</h1>

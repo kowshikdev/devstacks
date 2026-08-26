@@ -51,8 +51,8 @@ export default function LoginPage() {
 
   return (
     <main className="dashboard">
-      <div className="panel glass" style={{ padding: "40px 36px" }}>
-        <section className="intro" style={{ marginBottom: 24 }}>
+      <div className="panel" style={{ display: "flex", flexDirection: "column", gap: 20, padding: "40px 36px" }}>
+        <section className="intro">
           <p className="eyebrow">{mode === "sign-in" ? "Sign in" : "Sign up"}</p>
           <h1 style={{ fontSize: "1.7rem", margin: "8px 0 0" }}>
             {mode === "sign-in" ? (
@@ -74,9 +74,13 @@ export default function LoginPage() {
           Continue with GitHub
         </button>
 
-        <p className="muted" style={{ margin: "16px 0" }}>
-          or use email and password
-        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+          <span className="muted" style={{ fontSize: "0.78rem" }}>
+            or use email and password
+          </span>
+          <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+        </div>
 
         <form className="auth-form" onSubmit={handleSubmit}>
           <input
@@ -94,7 +98,7 @@ export default function LoginPage() {
             minLength={8}
             required
           />
-          <button type="submit" disabled={busy}>
+          <button type="submit" disabled={busy} style={{ marginTop: 2 }}>
             {mode === "sign-in" ? "Sign in" : "Sign up"}
           </button>
         </form>
@@ -102,7 +106,7 @@ export default function LoginPage() {
         <button
           type="button"
           className="link-button"
-          style={{ marginTop: 16 }}
+          style={{ justifySelf: "center", margin: "-8px auto 0" }}
           onClick={() => {
             setMode(mode === "sign-in" ? "sign-up" : "sign-in");
             setError(null);
@@ -112,8 +116,16 @@ export default function LoginPage() {
           {mode === "sign-in" ? "Need an account? Sign up" : "Already have an account? Sign in"}
         </button>
 
-        {notice && <p className="muted">{notice}</p>}
-        {error && <p className="error-text">{error}</p>}
+        {notice && (
+          <p className="muted" style={{ margin: 0 }}>
+            {notice}
+          </p>
+        )}
+        {error && (
+          <p className="error-text" style={{ margin: 0 }}>
+            {error}
+          </p>
+        )}
       </div>
     </main>
   );

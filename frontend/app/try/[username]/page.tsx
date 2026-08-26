@@ -36,7 +36,7 @@ export default function TryPreviewPage({ params }: PageProps) {
   }, [username]);
 
   return (
-    <main className="dashboard">
+    <main className="dashboard dashboard--wide">
       <section className="intro">
         <p className="eyebrow">Live preview · not saved · not published</p>
         <h1>@{username}</h1>
@@ -64,7 +64,9 @@ export default function TryPreviewPage({ params }: PageProps) {
           </section>
 
           <section>
-            <p className="claim-category">Recent repositories</p>
+            <p className="claim-category" style={{ marginBottom: 12 }}>
+              Recent repositories
+            </p>
             <ul className="claim-list">
               {preview.repositories.map((repository) => (
                 <li key={repository.name} className="review-card">
@@ -101,7 +103,9 @@ export default function TryPreviewPage({ params }: PageProps) {
 
           {preview.recent_commits.length > 0 && (
             <section>
-              <p className="claim-category">Recent commits (real evidence, unpublished)</p>
+              <p className="claim-category" style={{ marginBottom: 12 }}>
+                Recent commits (real evidence, unpublished)
+              </p>
               <ul className="evidence-list">
                 {preview.recent_commits.map((commit) => (
                   <li key={commit.sha}>

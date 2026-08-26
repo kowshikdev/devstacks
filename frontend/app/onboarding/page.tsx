@@ -32,32 +32,36 @@ export default function OnboardingPage() {
 
   return (
     <main className="dashboard">
-      <section className="intro">
-        <p className="eyebrow">Almost there</p>
-        <h1>Choose your handle</h1>
-        <p className="muted">This becomes your public profile URL.</p>
-      </section>
+      <div className="panel" style={{ display: "flex", flexDirection: "column", gap: 20, padding: "40px 36px" }}>
+        <section className="intro">
+          <p className="eyebrow">Almost there</p>
+          <h1 style={{ fontSize: "1.7rem", margin: "8px 0 0" }}>Choose your handle</h1>
+          <p className="muted" style={{ margin: "6px 0 0" }}>
+            This becomes your public profile URL.
+          </p>
+        </section>
 
-      <form className="auth-form" onSubmit={handleSubmit}>
-        <input
-          type="text"
-          placeholder="your-handle"
-          value={handle}
-          onChange={(event) => setHandle(event.target.value.toLowerCase())}
-          required
-        />
-        <input
-          type="text"
-          placeholder="Display name (optional)"
-          value={displayName}
-          onChange={(event) => setDisplayName(event.target.value)}
-        />
-        <button type="submit" disabled={busy}>
-          Create profile
-        </button>
-      </form>
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <input
+            type="text"
+            placeholder="your-handle"
+            value={handle}
+            onChange={(event) => setHandle(event.target.value.toLowerCase())}
+            required
+          />
+          <input
+            type="text"
+            placeholder="Display name (optional)"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+          />
+          <button type="submit" disabled={busy}>
+            Create profile
+          </button>
+        </form>
 
-      {error && <p className="error-text">{error}</p>}
+        {error && <p className="error-text">{error}</p>}
+      </div>
     </main>
   );
 }
