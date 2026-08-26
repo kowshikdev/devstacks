@@ -90,6 +90,20 @@ Note: work on this phase started ahead of the `GH-008` gate at explicit user dir
 - [ ] `REL-004` Verify deployment, rollback, webhook, scheduled sweep, cache, and secret-management behavior. Depends on `REL-001`, `REL-002`.
 - [ ] `REL-005` Publish connector extension documentation and release-readiness report. Depends on `REL-003`, `REL-004`.
 
+## Launch Readiness
+
+Not part of the original phased plan — added when the user asked for a global-attention-launch plan. Goal: distribution and conversion mechanics that don't depend on any Phase 4+ connector, plus the infra/automation gaps a viral traffic spike would expose immediately.
+
+- [x] `LAUNCH-001` Dynamic OG share card + social metadata on public profiles. `frontend/app/[handle]/opengraph-image.tsx` (Next.js 16 `ImageResponse`, verified against current docs via `ctx7`) renders display name, handle, verified claim count, top category, last-verified date; `generateMetadata` in `frontend/app/[handle]/page.tsx` adds title/description/OpenGraph/Twitter card tags. **Live-validated**: fetched the rendered PNG from the dev server — correct dark-theme card, real content-type `image/png`. Depends on `GH-006`.
+- [x] `LAUNCH-002` Auto-updating GitHub README badge. `GET /v1/public/profiles/{handle}/badge.svg` in `backend/src/devstacks_api/main.py` renders a server-side shields.io-style SVG (verified-claim count, cached 1h) with no client JS or new dependency. **Live-validated** against the real backend for both a claim-bearing and a not-found handle; 2 new tests in `test_profile_api.py`.
+- [x] `LAUNCH-003` Zero-signup instant demo. `POST /v1/demo/github-preview` (`backend/src/devstacks_api/github_demo.py`, `GitHubDemoPreviewService`) fetches a bounded, **unauthenticated, non-persisted** preview (top 5 public repos, 3 commits each, language breakdown) for any public GitHub username, using the app's own OAuth client-credentials as Basic auth only to raise GitHub's unauthenticated rate limit — no user token, no scopes, no consent needed. Frontend: `frontend/app/try/page.tsx` (username entry) and `frontend/app/try/[username]/page.tsx` (preview + GitHub sign-in CTA), linked from the homepage. Protected by a new in-process sliding-window rate limiter (`backend/src/devstacks_api/rate_limit.py`, 5 requests/min per IP — noted as needing a shared store if the backend is ever scaled horizontally). **Live-validated** end to end against real GitHub data (`torvalds` → real repos/commits returned) and the rate limit (6th request in a minute correctly 429'd). 5 + 2 new tests (`test_github_demo.py`, `test_rate_limit.py`) plus 3 endpoint tests. Depends on `GH-001`.
+
+**Not yet done** (explicitly out of scope for this pass, tracked for before an actual launch date):
+- Tier 0 automation (collapse the ~13-manual-step signup→publish flow) — real launch blocker, visitors will bounce on the current flow.
+- GitHub App migration (centralized webhooks, 15k req/hr per installation) — protects launch day specifically when many people connect concurrently.
+- Infra scaling (paid tier, connection pooling, operational visibility) — user chose to upgrade before launch; this is a billing/dashboard decision, not something to do autonomously without explicit confirmation.
+- Launch-day data story (aggregate, anonymized finding from a public-profile sample) and README credibility review.
+
 ## Post-v1 Backlog
 
 - [ ] `POST-001` Generate evidence-backed resume exports.

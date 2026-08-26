@@ -1,6 +1,12 @@
 from fastapi.testclient import TestClient
 
 from devstacks_api.auth import AuthenticatedUser, get_access_token_verifier
+from devstacks_api.github_demo import (
+    GitHubDemoCommit,
+    GitHubDemoNotFoundError,
+    GitHubDemoPreview,
+    GitHubDemoRepository,
+)
 from devstacks_api.github_oauth import GitHubConnection
 from devstacks_api.main import app
 from devstacks_api.repositories import PublishedClaim, PublishedProfile, ProfileSummary
@@ -162,6 +168,126 @@ def test_public_profile_endpoint_returns_not_found_for_an_absent_projection():
         del app.state.public_profile_repository
 
     assert response.status_code == 404
+
+
+def test_public_profile_badge_renders_svg_with_verified_claim_count():
+    app.state.public_profile_repository = FakePublicProfileRepository(
+        PublishedProfile(
+            id="profile-1",
+            handle="devstacks",
+            display_name="Dev Stacks",
+            claims=(
+                PublishedClaim(
+                    id="claim-revision-1",
+                    category="contribution",
+                    statement="Published claim only.",
+                    assurance_class="provider_observed",
+                    freshness_status="current",
+                    last_verified_at="2026-08-26T00:00:00+00:00",
+                ),
+            ),
+        )
+    )
+    try:
+        response = TestClient(app).get("/v1/public/profiles/devstacks/badge.svg")
+    finally:
+        del app.state.public_profile_repository
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "1 verified claim<" in response.text
+    assert "<svg" in response.text
+
+
+def test_public_profile_badge_renders_not_found_svg_for_an_absent_profile():
+    app.state.public_profile_repository = FakePublicProfileRepository(None)
+    try:
+        response = TestClient(app).get("/v1/public/profiles/devstacks/badge.svg")
+    finally:
+        del app.state.public_profile_repository
+
+    assert response.status_code == 200
+    assert "not found<" in response.text
+
+
+class FakeGitHubDemoPreviewService:
+    def __init__(self, preview: GitHubDemoPreview | Exception) -> None:
+        self._preview = preview
+
+    async def preview(self, username: str) -> GitHubDemoPreview:
+        if isinstance(self._preview, Exception):
+            raise self._preview
+        assert username == "octocat"
+        return self._preview
+
+
+def test_github_demo_preview_returns_a_non_persisted_preview():
+    app.state.github_demo_preview_service = FakeGitHubDemoPreviewService(
+        GitHubDemoPreview(
+            username="octocat",
+            display_name="Octo Cat",
+            avatar_url="https://github.com/images/octocat.png",
+            public_repos=1,
+            repositories=(
+                GitHubDemoRepository(
+                    name="octocat/hello-world",
+                    html_url="https://github.com/octocat/hello-world",
+                    description="Demo repo",
+                    language="Python",
+                    stargazers_count=5,
+                    pushed_at="2026-08-26T00:00:00Z",
+                ),
+            ),
+            recent_commits=(
+                GitHubDemoCommit(
+                    repository="octocat/hello-world",
+                    sha="abc123def456",
+                    message="Add deterministic ingestion",
+                    html_url="https://github.com/octocat/hello-world/commit/abc123def456",
+                    authored_at="2026-08-25T00:00:00Z",
+                ),
+            ),
+            top_languages=("Python",),
+        )
+    )
+    try:
+        response = TestClient(app).post(
+            "/v1/demo/github-preview",
+            json={"github_username": "octocat"},
+        )
+    finally:
+        del app.state.github_demo_preview_service
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["username"] == "octocat"
+    assert body["is_preview"] is True
+    assert body["repositories"][0]["name"] == "octocat/hello-world"
+    assert body["recent_commits"][0]["sha"] == "abc123def456"
+
+
+def test_github_demo_preview_returns_not_found_for_an_unknown_username():
+    app.state.github_demo_preview_service = FakeGitHubDemoPreviewService(
+        GitHubDemoNotFoundError("GitHub username was not found")
+    )
+    try:
+        response = TestClient(app).post(
+            "/v1/demo/github-preview",
+            json={"github_username": "octocat"},
+        )
+    finally:
+        del app.state.github_demo_preview_service
+
+    assert response.status_code == 404
+
+
+def test_github_demo_preview_requires_a_non_empty_username():
+    response = TestClient(app).post(
+        "/v1/demo/github-preview",
+        json={"github_username": "   "},
+    )
+
+    assert response.status_code == 400
 
 
 def test_github_authorization_start_requires_bearer_authentication():

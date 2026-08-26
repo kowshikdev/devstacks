@@ -31,19 +31,43 @@ export default function DashboardPage() {
     <AppShell>
       <section className="intro">
         <p className="eyebrow">Dashboard</p>
-        <h1>Your profile</h1>
+        <h1>
+          Your <em>profile</em>
+        </h1>
       </section>
 
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="error-text">{error}</p>}
 
       {profile && (
-        <section className="panel">
-          <p>
+        <section className="panel" style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 18 }}>
+          <div
+            aria-hidden="true"
+            style={{
+              width: 52,
+              height: 52,
+              flexShrink: 0,
+              borderRadius: "50%",
+              background: "linear-gradient(160deg, var(--accent-strong), var(--accent))",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--accent-contrast)",
+              fontWeight: 600,
+              fontSize: 18,
+            }}
+          >
+            {(profile.display_name ?? profile.handle).slice(0, 2).toUpperCase()}
+          </div>
+          <div>
             <strong>{profile.display_name ?? profile.handle}</strong>
-          </p>
-          <p className="muted">@{profile.handle}</p>
-          <p className="muted">{profile.is_public ? "Public" : "Not public yet"}</p>
+            <p className="muted" style={{ margin: "2px 0 8px" }}>
+              @{profile.handle}
+            </p>
+            <span className={profile.is_public ? "status-pill status-current" : "status-pill"}>
+              {profile.is_public ? "Public" : "Not public yet"}
+            </span>
+          </div>
         </section>
       )}
     </AppShell>

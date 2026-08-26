@@ -105,6 +105,42 @@ export function getPublicProfile(handle: string): Promise<PublishedProfile> {
   return request<PublishedProfile>(`/v1/public/profiles/${encodeURIComponent(handle)}`, {}, false);
 }
 
+export interface DemoRepository {
+  name: string;
+  html_url: string;
+  description: string | null;
+  language: string | null;
+  stargazers_count: number;
+  pushed_at: string | null;
+}
+
+export interface DemoCommit {
+  repository: string;
+  sha: string;
+  message: string;
+  html_url: string;
+  authored_at: string | null;
+}
+
+export interface DemoPreview {
+  username: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  public_repos: number;
+  top_languages: string[];
+  repositories: DemoRepository[];
+  recent_commits: DemoCommit[];
+  is_preview: true;
+}
+
+export function getGithubDemoPreview(githubUsername: string): Promise<DemoPreview> {
+  return request<DemoPreview>(
+    "/v1/demo/github-preview",
+    { method: "POST", body: JSON.stringify({ github_username: githubUsername }) },
+    false
+  );
+}
+
 export async function beginGithubAuth(): Promise<string> {
   const result = await request<{ authorization_url: string }>(
     "/v1/connectors/github/authorize",

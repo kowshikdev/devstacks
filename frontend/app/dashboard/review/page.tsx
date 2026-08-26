@@ -50,7 +50,9 @@ export default function ReviewDashboardPage() {
     <AppShell>
       <section className="intro">
         <p className="eyebrow">Review</p>
-        <h1>Pending claim revisions</h1>
+        <h1>
+          Pending claim <em>revisions</em>
+        </h1>
       </section>
 
       {loading && <p className="muted">Loading…</p>}
@@ -80,8 +82,21 @@ export default function ReviewDashboardPage() {
             <ul className="evidence-list">
               {claim.evidence.map((item) => (
                 <li key={item.evidence_version_id}>
-                  <span className={`status-pill status-${item.relation}`}>{item.relation}</span>{" "}
-                  {item.source_type} · {item.source_ref} · {item.assurance_class} · {item.validity}
+                  <span
+                    className="evidence-mark"
+                    style={{
+                      color:
+                        item.relation === "supports"
+                          ? "var(--success)"
+                          : item.relation === "contradicts"
+                            ? "var(--danger)"
+                            : "var(--text-muted)",
+                    }}
+                  >
+                    {item.relation === "supports" ? "+" : item.relation === "contradicts" ? "-" : "~"}
+                  </span>
+                  {item.relation} · {item.source_type} · {item.source_ref} · {item.assurance_class} ·{" "}
+                  {item.validity}
                 </li>
               ))}
             </ul>

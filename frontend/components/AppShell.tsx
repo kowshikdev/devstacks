@@ -19,6 +19,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <div className="app-shell">
       <header className="topbar">
         <Link href="/dashboard" className="wordmark">
+          <svg className="wordmark-mark" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+            <circle cx="6" cy="13" r="3.4" stroke="#e9efec" strokeWidth="1.6" />
+            <circle cx="20" cy="6" r="2.6" fill="#34d399" />
+            <circle cx="20" cy="20" r="2.6" fill="#34d399" />
+            <path d="M9 11.6L17.2 7.3M9 14.4L17.2 18.7" stroke="#37423c" strokeWidth="1.4" />
+          </svg>
           DevStacks
         </Link>
         <nav className="topnav">

@@ -1,11 +1,20 @@
 from datetime import datetime, timezone
 from os import getenv
+from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .auth import AuthenticatedUser, get_current_user, get_tenant_context
+from .github_demo import (
+    GitHubDemoError,
+    GitHubDemoNotFoundError,
+    GitHubDemoPreviewService,
+    GitHubDemoSettings,
+    GitHubDemoUnavailableError,
+)
 from .github_oauth import (
     GitHubOAuthError,
     GitHubOAuthService,
@@ -18,6 +27,7 @@ from .github_webhook_service import (
     GitHubWebhookSubscriptionDraft,
 )
 from .github_webhooks import GitHubWebhookError, GitHubWebhookSettings, GitHubWebhookUnavailableError
+from .rate_limit import InMemoryRateLimiter
 from .repositories import (
     ProfileRepository,
     PublicProfileRepository,
@@ -56,6 +66,8 @@ app = FastAPI(
     version="0.1.0",
     description="API for the DevStacks developer evidence graph.",
 )
+
+_demo_preview_rate_limiter = InMemoryRateLimiter(max_requests=5, window_seconds=60.0)
 
 _default_allowed_origins = "http://localhost:3000,http://127.0.0.1:3000"
 _allowed_origins = [
@@ -362,6 +374,149 @@ async def published_profile(
             }
             for claim in profile.claims
         ],
+    }
+
+
+def _render_badge_svg(label: str, value: str, value_color: str) -> str:
+    """Render a shields.io-style flat badge SVG for embedding in READMEs."""
+    char_width = 6.5
+    padding = 10
+    label_width = round(len(label) * char_width + padding * 2)
+    value_width = round(len(value) * char_width + padding * 2)
+    total_width = label_width + value_width
+    label_x = label_width / 2
+    value_x = label_width + value_width / 2
+    label_escaped = xml_escape(label)
+    value_escaped = xml_escape(value)
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{total_width}" height="20" role="img" aria-label="{label_escaped}: {value_escaped}">
+  <linearGradient id="s" x2="0" y2="100%">
+    <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
+    <stop offset="1" stop-opacity=".1"/>
+  </linearGradient>
+  <clipPath id="r"><rect width="{total_width}" height="20" rx="3" fill="#fff"/></clipPath>
+  <g clip-path="url(#r)">
+    <rect width="{label_width}" height="20" fill="#2d2d2d"/>
+    <rect x="{label_width}" width="{value_width}" height="20" fill="{value_color}"/>
+    <rect width="{total_width}" height="20" fill="url(#s)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
+    <text x="{label_x}" y="14">{label_escaped}</text>
+    <text x="{value_x}" y="14">{value_escaped}</text>
+  </g>
+</svg>"""
+
+
+@app.get("/v1/public/profiles/{handle}/badge.svg", tags=["public-profiles"])
+async def public_profile_badge(handle: str, request: Request) -> Response:
+    """Render an embeddable README badge showing verified claim count for a public profile."""
+    repository: PublicProfileRepository | None = getattr(
+        request.app.state,
+        "public_profile_repository",
+        None,
+    )
+    if repository is None:
+        try:
+            repository = SupabasePublicProfileRepository(
+                SupabaseServiceSettings.from_environment()
+            )
+        except RepositoryUnavailableError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Public profile service is unavailable",
+            ) from error
+    try:
+        profile = await repository.get_published_profile(handle)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Public profile service is unavailable",
+        ) from error
+
+    if profile is None:
+        svg = _render_badge_svg("devstacks", "not found", "#9f9f9f")
+    else:
+        count = len(profile.claims)
+        value = f"{count} verified claim{'s' if count != 1 else ''}"
+        color = "#34d399" if count > 0 else "#9f9f9f"
+        svg = _render_badge_svg("devstacks", value, color)
+
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"},
+    )
+
+
+class DemoPreviewRequest(BaseModel):
+    github_username: str
+
+
+@app.post("/v1/demo/github-preview", tags=["demo"])
+async def github_demo_preview(body: DemoPreviewRequest, request: Request) -> dict[str, object]:
+    """Bounded, unauthenticated, non-persisted preview of a public GitHub username.
+
+    No login, no evidence write, no agent run — lets a visitor see real
+    GitHub facts about themselves before deciding to connect an account.
+    """
+    client_host = request.client.host if request.client else "unknown"
+    if not _demo_preview_rate_limiter.allow(client_host):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many demo requests, try again shortly",
+        )
+
+    username = body.github_username.strip()
+    if not username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="github_username is required")
+
+    service: GitHubDemoPreviewService | None = getattr(
+        request.app.state,
+        "github_demo_preview_service",
+        None,
+    )
+    if service is None:
+        service = GitHubDemoPreviewService(GitHubDemoSettings.from_environment())
+
+    try:
+        preview = await service.preview(username)
+    except GitHubDemoNotFoundError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="GitHub username was not found") from error
+    except GitHubDemoUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GitHub demo preview is unavailable",
+        ) from error
+    except GitHubDemoError as error:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="GitHub demo preview failed") from error
+
+    return {
+        "username": preview.username,
+        "display_name": preview.display_name,
+        "avatar_url": preview.avatar_url,
+        "public_repos": preview.public_repos,
+        "top_languages": list(preview.top_languages),
+        "repositories": [
+            {
+                "name": repository.name,
+                "html_url": repository.html_url,
+                "description": repository.description,
+                "language": repository.language,
+                "stargazers_count": repository.stargazers_count,
+                "pushed_at": repository.pushed_at,
+            }
+            for repository in preview.repositories
+        ],
+        "recent_commits": [
+            {
+                "repository": commit.repository,
+                "sha": commit.sha,
+                "message": commit.message,
+                "html_url": commit.html_url,
+                "authored_at": commit.authored_at,
+            }
+            for commit in preview.recent_commits
+        ],
+        "is_preview": True,
     }
 
 
