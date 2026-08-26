@@ -193,30 +193,38 @@ h1 em {
   border-bottom: 1px solid var(--border);
 }
 
-.terminal-bar span {
+.terminal-bar span:not(.terminal-file) {
+  flex-shrink: 0;
   width: 9px;
   height: 9px;
   border-radius: 50%;
   background: var(--border-strong);
 }
 
-.terminal-bar span:nth-child(1) {
+.terminal-bar span:not(.terminal-file):nth-child(1) {
   background: #5a4038;
 }
 
-.terminal-bar span:nth-child(2) {
+.terminal-bar span:not(.terminal-file):nth-child(2) {
   background: #5a5238;
 }
 
-.terminal-bar span:nth-child(3) {
+.terminal-bar span:not(.terminal-file):nth-child(3) {
   background: #385a44;
 }
 
 .terminal-bar .terminal-file {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
   margin-left: 10px;
   font-family: var(--font-mono);
   font-size: 0.72rem;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .terminal-body {
