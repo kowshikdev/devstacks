@@ -105,6 +105,60 @@ export function getPublicProfile(handle: string): Promise<PublishedProfile> {
   return request<PublishedProfile>(`/v1/public/profiles/${encodeURIComponent(handle)}`, {}, false);
 }
 
+export type IngestionRunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "partial"
+  | "failed"
+  | "no_op";
+
+/** A run is done when it will not change again without a new trigger. */
+export const TERMINAL_RUN_STATUSES: readonly IngestionRunStatus[] = [
+  "succeeded",
+  "partial",
+  "failed",
+  "no_op",
+];
+
+export interface IngestionRun {
+  id: string;
+  status: IngestionRunStatus;
+  trigger_type: "manual" | "webhook" | "scheduled";
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error_summary: string | null;
+}
+
+export type ConnectorPlatform = "github" | "linkedin" | "leetcode" | "hackerrank";
+
+export type ConnectionStatus =
+  | "pending"
+  | "active"
+  | "degraded"
+  | "revoked"
+  | "disconnected";
+
+export interface Connector {
+  id: string;
+  platform: ConnectorPlatform;
+  external_subject: string | null;
+  connection_status: ConnectionStatus;
+  connected_at: string | null;
+  last_synced_at: string | null;
+  latest_run: IngestionRun | null;
+}
+
+export async function listConnectors(): Promise<Connector[]> {
+  const result = await request<{ connectors: Connector[] }>("/v1/connectors");
+  return result.connectors;
+}
+
+export function getIngestionRun(runId: string): Promise<IngestionRun> {
+  return request<IngestionRun>(`/v1/ingestion-runs/${encodeURIComponent(runId)}`);
+}
+
 export interface DemoRepository {
   name: string;
   html_url: string;

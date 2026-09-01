@@ -1,15 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import AppShell from "../../../components/AppShell";
 import { toHeaderUser, useProfile } from "../../../lib/hooks/useProfile";
-import { ApiError, beginGithubAuth, syncGithubConnection } from "../../../lib/api/client";
-import { readConnection, type StoredConnection } from "../../../lib/connections";
+import { isTerminal, useConnectors } from "../../../lib/hooks/useConnectors";
+import {
+  ApiError,
+  beginGithubAuth,
+  syncGithubConnection,
+  type Connector,
+  type ConnectionStatus,
+  type IngestionRun,
+} from "../../../lib/api/client";
 import { Button, ButtonLink } from "../../../components/ui/Button";
 import { Card, CardBody, CardHeader } from "../../../components/ui/Card";
-import { Flash } from "../../../components/ui/Feedback";
-import { Label } from "../../../components/ui/Label";
+import { Flash, Skeleton, Spinner } from "../../../components/ui/Feedback";
+import { Label, type LabelTone } from "../../../components/ui/Label";
 import { RelativeTime } from "../../../components/ui/Time";
 import { useToast } from "../../../components/ui/Toast";
 import {
@@ -22,17 +29,36 @@ import {
   PlugIcon,
   ShieldIcon,
   SyncIcon,
+  XCircleIcon,
 } from "../../../components/ui/Icon";
 
-interface PlannedConnector {
-  id: string;
-  name: string;
-  description: string;
-  icon: React.ReactNode;
-  assurance: string;
-}
+const CONNECTION_TONE: Record<ConnectionStatus, LabelTone> = {
+  active: "success",
+  pending: "attention",
+  degraded: "attention",
+  revoked: "danger",
+  disconnected: "neutral",
+};
 
-const PLANNED: PlannedConnector[] = [
+const RUN_TONE: Record<IngestionRun["status"], LabelTone> = {
+  queued: "neutral",
+  running: "info",
+  succeeded: "success",
+  partial: "attention",
+  failed: "danger",
+  no_op: "neutral",
+};
+
+const RUN_LABEL: Record<IngestionRun["status"], string> = {
+  queued: "Queued",
+  running: "Running",
+  succeeded: "Succeeded",
+  partial: "Partially succeeded",
+  failed: "Failed",
+  no_op: "Nothing new",
+};
+
+const PLANNED = [
   {
     id: "linkedin",
     name: "LinkedIn export",
@@ -62,38 +88,34 @@ const PLANNED: PlannedConnector[] = [
 export default function ConnectionsPage() {
   const { profile } = useProfile();
   const { toast } = useToast();
+  const { connectors, error, trackedRun, reload, trackRun } = useConnectors(Boolean(profile));
 
-  const [connection, setConnection] = useState<StoredConnection | null>(null);
-  const [ready, setReady] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setConnection(readConnection());
-    setReady(true);
-  }, []);
+  const github = connectors?.find((connector) => connector.platform === "github") ?? null;
 
   async function connect() {
-    setError(null);
+    setAuthError(null);
     setConnecting(true);
     try {
       const authorizationUrl = await beginGithubAuth();
       window.location.href = authorizationUrl;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not start GitHub authorization");
+      setAuthError(err instanceof ApiError ? err.message : "Could not start GitHub authorization");
       setConnecting(false);
     }
   }
 
-  async function sync() {
-    if (!connection) return;
-    setSyncing(true);
+  async function sync(connector: Connector) {
+    setSyncingId(connector.id);
     try {
-      await syncGithubConnection(connection.connectionId);
+      const { run_id: runId } = await syncGithubConnection(connector.id);
+      trackRun(runId);
       toast({
         title: "Sync queued",
-        description: "Evidence collection runs in the background; new revisions land in review.",
+        description: "Evidence collection is running; this page follows the run.",
         tone: "success",
       });
     } catch (err) {
@@ -103,7 +125,7 @@ export default function ConnectionsPage() {
         tone: "danger",
       });
     } finally {
-      setSyncing(false);
+      setSyncingId(null);
     }
   }
 
@@ -118,8 +140,22 @@ export default function ConnectionsPage() {
             it do its job, and tokens are encrypted server-side and never returned to the browser.
           </p>
         </div>
+        <div className="page-header__actions">
+          <Button
+            variant="invisible"
+            onClick={() => void reload()}
+            leadingIcon={<SyncIcon size={15} />}
+          >
+            Refresh
+          </Button>
+        </div>
       </div>
 
+      {authError ? (
+        <div className="mb-5">
+          <Flash tone="danger">{authError}</Flash>
+        </div>
+      ) : null}
       {error ? (
         <div className="mb-5">
           <Flash tone="danger">{error}</Flash>
@@ -135,10 +171,12 @@ export default function ConnectionsPage() {
             </span>
           }
           actions={
-            ready && connection ? (
-              <Label tone="success">
+            connectors === null ? (
+              <Skeleton width={88} height={20} radius={999} />
+            ) : github ? (
+              <Label tone={CONNECTION_TONE[github.connection_status]}>
                 <CheckCircleIcon size={12} />
-                Connected
+                {github.connection_status}
               </Label>
             ) : (
               <Label tone="attention">Not connected</Label>
@@ -161,30 +199,53 @@ export default function ConnectionsPage() {
             <Label>Idempotent replay</Label>
           </div>
 
-          {ready && connection ? (
+          {connectors === null ? (
+            <div className="card mt-5">
+              <div className="card__row">
+                <div className="flex-1 stack gap-2">
+                  <Skeleton width="30%" height={14} />
+                  <Skeleton width="55%" height={10} />
+                </div>
+              </div>
+            </div>
+          ) : github ? (
             <>
               <div className="card mt-5">
                 <div className="card__row">
                   <div className="flex-1">
                     <p className="text-sm font-semibold">
-                      {connection.githubLogin ? `@${connection.githubLogin}` : "GitHub account"}
-                    </p>
-                    <p className="text-xs text-subtle mt-1 font-mono break-anywhere">
-                      connection {connection.connectionId}
+                      {github.external_subject ? `@${github.external_subject}` : "GitHub account"}
                     </p>
                     <p className="text-xs text-subtle mt-1">
-                      Authorized <RelativeTime value={connection.connectedAt} />
+                      {github.connected_at ? (
+                        <>
+                          Authorized <RelativeTime value={github.connected_at} />
+                        </>
+                      ) : (
+                        "Authorization pending"
+                      )}
+                      {github.last_synced_at ? (
+                        <>
+                          {" · last synced "}
+                          <RelativeTime value={github.last_synced_at} />
+                        </>
+                      ) : (
+                        " · never synced"
+                      )}
                     </p>
                   </div>
                   <Button
-                    onClick={() => void sync()}
-                    loading={syncing}
+                    onClick={() => void sync(github)}
+                    loading={syncingId === github.id}
                     leadingIcon={<SyncIcon size={15} />}
                   >
                     Sync now
                   </Button>
                 </div>
+
+                <RunRow run={trackedRun ?? github.latest_run} live={Boolean(trackedRun)} />
               </div>
+
               <div className="row row--wrap gap-2 mt-4">
                 <ButtonLink href="/dashboard/review">Review proposed claims</ButtonLink>
                 <Button variant="invisible" onClick={() => void connect()} loading={connecting}>
@@ -247,5 +308,58 @@ export default function ConnectionsPage() {
         </CardBody>
       </Card>
     </AppShell>
+  );
+}
+
+/** The last thing the connector actually did, or is doing right now. */
+function RunRow({ run, live }: { run: IngestionRun | null; live: boolean }) {
+  if (!run) {
+    return (
+      <div className="card__row">
+        <p className="text-xs text-subtle">
+          No ingestion run yet. Queue one to collect the first evidence versions.
+        </p>
+      </div>
+    );
+  }
+
+  const settled = isTerminal(run.status);
+
+  return (
+    <div className="card__row">
+      <div className="flex-1">
+        <div className="row row--wrap gap-2">
+          <Label tone={RUN_TONE[run.status]}>
+            {run.status === "failed" ? (
+              <XCircleIcon size={12} />
+            ) : settled ? (
+              <CheckCircleIcon size={12} />
+            ) : (
+              <ClockIcon size={12} />
+            )}
+            {RUN_LABEL[run.status]}
+          </Label>
+          <Label mono>{run.trigger_type}</Label>
+          {live && !settled ? (
+            <span className="row gap-2 text-xs text-muted" aria-live="polite">
+              <Spinner label="Following the ingestion run" />
+              following this run
+            </span>
+          ) : null}
+        </div>
+        <p className="text-xs text-subtle mt-2">
+          Started <RelativeTime value={run.started_at ?? run.created_at} />
+          {run.completed_at ? (
+            <>
+              {" · finished "}
+              <RelativeTime value={run.completed_at} />
+            </>
+          ) : null}
+        </p>
+        {run.error_summary ? (
+          <p className="text-xs text-danger mt-2 break-anywhere">{run.error_summary}</p>
+        ) : null}
+      </div>
+    </div>
   );
 }

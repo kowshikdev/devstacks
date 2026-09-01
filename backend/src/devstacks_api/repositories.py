@@ -69,6 +69,40 @@ class PublishedProfile:
     claims: tuple[PublishedClaim, ...]
 
 
+@dataclass(frozen=True)
+class ConnectorRun:
+    """The most recent ingestion run observed for a connection."""
+
+    id: str
+    status: str
+    trigger_type: str
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+    error_summary: str | None
+
+
+@dataclass(frozen=True)
+class ConnectorSummary:
+    """A caller-owned source connection, with no credential material."""
+
+    id: str
+    platform: str
+    external_subject: str | None
+    connection_status: str
+    connected_at: str | None
+    last_synced_at: str | None
+    latest_run: ConnectorRun | None
+
+
+class ConnectorRepository(Protocol):
+    async def list_own_connectors(self, tenant: TenantContext) -> tuple[ConnectorSummary, ...]:
+        """Return every source connection belonging to exactly one tenant."""
+
+    async def get_own_run(self, tenant: TenantContext, run_id: str) -> ConnectorRun | None:
+        """Return one ingestion run, only when the caller's tenant owns it."""
+
+
 class ProfileRepository(Protocol):
     async def get_own_profile(self, tenant: TenantContext) -> ProfileSummary | None:
         """Return the profile for exactly one authenticated tenant."""
@@ -280,6 +314,151 @@ class SupabaseProfileRepository:
             display_name=response_display_name if isinstance(response_display_name, str) else None,
             is_public=is_public,
         )
+
+
+class SupabaseConnectorRepository:
+    """Server-only repository for connector state, scoped by a validated tenant.
+
+    Connector rows carry no credential material — encrypted tokens live in a
+    separate table that this repository never selects from — so the projection
+    returned here is safe to hand to the browser.
+    """
+
+    _CONNECTION_FIELDS = (
+        "id,platform,external_subject,connection_status,connected_at,last_synced_at"
+    )
+    _RUN_FIELDS = (
+        "id,connection_id,status,trigger_type,created_at,started_at,completed_at,error_summary"
+    )
+    # Bounds the run query: enough history to find the newest run per connection
+    # without letting a busy profile return an unbounded page.
+    _RUN_LIMIT = "50"
+
+    def __init__(
+        self,
+        settings: SupabaseServiceSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def list_own_connectors(self, tenant: TenantContext) -> tuple[ConnectorSummary, ...]:
+        connections = await self._select(
+            "source_connections",
+            {
+                "profile_id": f"eq.{tenant.profile_id}",
+                "select": self._CONNECTION_FIELDS,
+                "order": "created_at.desc",
+            },
+        )
+        if not connections:
+            return ()
+
+        runs = await self._select(
+            "ingestion_runs",
+            {
+                "profile_id": f"eq.{tenant.profile_id}",
+                "select": self._RUN_FIELDS,
+                "order": "created_at.desc",
+                "limit": self._RUN_LIMIT,
+            },
+        )
+
+        # Runs arrive newest first, so the first row seen for a connection is
+        # its latest run and later rows for the same connection are history.
+        latest_by_connection: dict[str, ConnectorRun] = {}
+        for record in runs:
+            connection_id = record.get("connection_id")
+            if not isinstance(connection_id, str) or connection_id in latest_by_connection:
+                continue
+            latest_by_connection[connection_id] = self._run(record)
+
+        summaries: list[ConnectorSummary] = []
+        for record in connections:
+            connection_id = record.get("id")
+            platform = record.get("platform")
+            connection_status = record.get("connection_status")
+            if not isinstance(connection_id, str) or not isinstance(platform, str):
+                raise RepositoryUnavailableError("Supabase connector response is incomplete")
+            if not isinstance(connection_status, str):
+                raise RepositoryUnavailableError("Supabase connector response is incomplete")
+            summaries.append(
+                ConnectorSummary(
+                    id=connection_id,
+                    platform=platform,
+                    external_subject=self._text(record.get("external_subject")),
+                    connection_status=connection_status,
+                    connected_at=self._text(record.get("connected_at")),
+                    last_synced_at=self._text(record.get("last_synced_at")),
+                    latest_run=latest_by_connection.get(connection_id),
+                )
+            )
+        return tuple(summaries)
+
+    async def get_own_run(self, tenant: TenantContext, run_id: str) -> ConnectorRun | None:
+        records = await self._select(
+            "ingestion_runs",
+            {
+                "id": f"eq.{run_id}",
+                # The tenant filter is applied in the query rather than after it,
+                # so another tenant's run is never fetched in the first place.
+                "profile_id": f"eq.{tenant.profile_id}",
+                "select": self._RUN_FIELDS,
+            },
+        )
+        if not records:
+            return None
+        return self._run(records[0])
+
+    async def _select(self, table: str, params: dict[str, str]) -> list[dict[str, object]]:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.get(f"/rest/v1/{table}", params=params)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase connector query failed") from error
+
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase connector query failed")
+
+        records = response.json()
+        if not isinstance(records, list):
+            raise RepositoryUnavailableError("Supabase connector response is invalid")
+        for record in records:
+            if not isinstance(record, dict):
+                raise RepositoryUnavailableError("Supabase connector response is invalid")
+        return records
+
+    @classmethod
+    def _run(cls, record: dict[str, object]) -> ConnectorRun:
+        run_id = cls._required(record, "id")
+        return ConnectorRun(
+            id=run_id,
+            status=cls._required(record, "status"),
+            trigger_type=cls._required(record, "trigger_type"),
+            created_at=cls._required(record, "created_at"),
+            started_at=cls._text(record.get("started_at")),
+            completed_at=cls._text(record.get("completed_at")),
+            error_summary=cls._text(record.get("error_summary")),
+        )
+
+    @staticmethod
+    def _required(record: dict[str, object], field: str) -> str:
+        value = record.get(field)
+        if not isinstance(value, str) or not value:
+            raise RepositoryUnavailableError("Supabase ingestion run response is incomplete")
+        return value
+
+    @staticmethod
+    def _text(value: object) -> str | None:
+        return value if isinstance(value, str) else None
 
 
 class SupabasePublicProfileRepository:

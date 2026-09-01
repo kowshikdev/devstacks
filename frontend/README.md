@@ -31,6 +31,8 @@ lib/
   api/client.ts          Typed API client (bearer token from Supabase).
   supabase/client.ts     Auth only.
   hooks/useProfile.ts    Own-profile loading plus auth routing.
+  hooks/useConnectors.ts Connector state, and polling of a queued sync run
+                         until it reaches a terminal status.
   format/time.ts         Pure formatters usable from server components.
 styles/
   tokens.css             Primitives, then semantic roles. Themes redefine

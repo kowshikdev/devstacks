@@ -31,11 +31,15 @@ from .github_webhook_service import (
 from .github_webhooks import GitHubWebhookError, GitHubWebhookSettings, GitHubWebhookUnavailableError
 from .rate_limit import InMemoryRateLimiter
 from .repositories import (
+    ConnectorRepository,
+    ConnectorRun,
+    ConnectorSummary,
     ProfileRepository,
     PublicProfileRepository,
     RepositoryUnavailableError,
     SupabaseAgentRunRepository,
     SupabaseClaimRepository,
+    SupabaseConnectorRepository,
     SupabaseGitHubAuthorizationRepository,
     SupabaseGitHubWebhookRepository,
     SupabaseIngestionJobRepository,
@@ -129,6 +133,23 @@ def get_ingestion_job_repository(request: Request) -> SupabaseIngestionJobReposi
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Ingestion service is unavailable",
+        ) from error
+
+
+def get_connector_repository(request: Request) -> ConnectorRepository:
+    repository: ConnectorRepository | None = getattr(
+        request.app.state,
+        "connector_repository",
+        None,
+    )
+    if repository is not None:
+        return repository
+    try:
+        return SupabaseConnectorRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Connector service is unavailable",
         ) from error
 
 
@@ -594,6 +615,76 @@ async def queue_github_sync(
             detail="Ingestion service is unavailable",
         ) from error
     return {"run_id": run_id}
+
+
+def _run_projection(run: ConnectorRun) -> dict[str, object]:
+    return {
+        "id": run.id,
+        "status": run.status,
+        "trigger_type": run.trigger_type,
+        "created_at": run.created_at,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "error_summary": run.error_summary,
+    }
+
+
+def _connector_projection(connector: ConnectorSummary) -> dict[str, object]:
+    return {
+        "id": connector.id,
+        "platform": connector.platform,
+        "external_subject": connector.external_subject,
+        "connection_status": connector.connection_status,
+        "connected_at": connector.connected_at,
+        "last_synced_at": connector.last_synced_at,
+        "latest_run": _run_projection(connector.latest_run) if connector.latest_run else None,
+    }
+
+
+@app.get("/v1/connectors", tags=["connectors"])
+async def list_connectors(
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, object]:
+    """List the caller's own source connections and each one's latest run.
+
+    Credential material is never part of this projection: encrypted tokens live
+    in a table this read does not touch.
+    """
+    repository = get_connector_repository(request)
+    try:
+        connectors = await repository.list_own_connectors(tenant)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Connector service is unavailable",
+        ) from error
+    return {"connectors": [_connector_projection(connector) for connector in connectors]}
+
+
+@app.get("/v1/ingestion-runs/{run_id}", tags=["connectors"])
+async def get_ingestion_run(
+    run_id: str,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, object]:
+    """Report one queued sync's progress, so a caller can follow the run it started."""
+    repository = get_connector_repository(request)
+    try:
+        run = await repository.get_own_run(tenant, run_id)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Connector service is unavailable",
+        ) from error
+    if run is None:
+        # A run owned by another tenant is indistinguishable from one that does
+        # not exist, which is the only answer that leaks nothing.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ingestion run not found",
+        )
+    return _run_projection(run)
 
 
 @app.post("/v1/webhooks/github", status_code=status.HTTP_202_ACCEPTED, tags=["github"])

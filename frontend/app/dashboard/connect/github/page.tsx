@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "../../../../components/AppShell";
 import { toHeaderUser, useProfile } from "../../../../lib/hooks/useProfile";
 import { ApiError, beginGithubAuth, syncGithubConnection } from "../../../../lib/api/client";
-import { writeConnection } from "../../../../lib/connections";
+import { isTerminal, useConnectors } from "../../../../lib/hooks/useConnectors";
 import { Button, ButtonLink } from "../../../../components/ui/Button";
 import { Card, CardBody } from "../../../../components/ui/Card";
 import { Flash, Spinner } from "../../../../components/ui/Feedback";
@@ -66,15 +66,8 @@ function ConnectGithubContent() {
     errorCode ? (ERROR_MESSAGES[errorCode] ?? "GitHub authorization failed.") : null
   );
   const [syncing, setSyncing] = useState(false);
-  const [syncQueued, setSyncQueued] = useState(false);
-
-  // Remember the connection so the connections surface can offer a manual sync
-  // without asking the user to hold on to an opaque identifier.
-  useEffect(() => {
-    if (connected && connectionId) {
-      writeConnection({ connectionId, githubLogin });
-    }
-  }, [connected, connectionId, githubLogin]);
+  const { trackedRun, trackRun } = useConnectors(false);
+  const syncQueued = trackedRun !== null;
 
   // Arriving with no result at all means the flow has not started yet: begin it.
   useEffect(() => {
@@ -92,8 +85,8 @@ function ConnectGithubContent() {
     if (!connectionId) return;
     setSyncing(true);
     try {
-      await syncGithubConnection(connectionId);
-      setSyncQueued(true);
+      const { run_id: runId } = await syncGithubConnection(connectionId);
+      trackRun(runId);
       toast({
         title: "Sync queued",
         description: "Evidence collection is running in the background.",
@@ -134,7 +127,7 @@ function ConnectGithubContent() {
                 Identity bound
               </Label>
               <Label tone={syncQueued ? "success" : "neutral"}>
-                {syncQueued ? "Sync queued" : "No sync queued yet"}
+                {trackedRun ? `Run ${trackedRun.status}` : "No sync queued yet"}
               </Label>
             </div>
 
@@ -154,10 +147,18 @@ function ConnectGithubContent() {
                   devstacks sync github
                   {syncQueued ? "" : <span className="cursor" />}
                 </p>
-                {syncQueued ? (
-                  <p className="window__line window__line--ok">
+                {trackedRun ? (
+                  <p
+                    className={
+                      trackedRun.status === "failed"
+                        ? "window__line"
+                        : "window__line window__line--ok"
+                    }
+                    aria-live="polite"
+                  >
                     <CheckCircleIcon size={14} />
-                    ingestion run leased — evidence collection in progress
+                    run {trackedRun.status}
+                    {isTerminal(trackedRun.status) ? "" : " — evidence collection in progress"}
                   </p>
                 ) : null}
               </div>

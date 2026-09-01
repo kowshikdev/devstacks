@@ -45,9 +45,11 @@ The frontend is a full product application rather than a scaffold. It ships its 
 | Onboarding | `/onboarding` | Handle claim and first connector, as a progressed wizard. |
 | Overview | `/dashboard` | Evidence and review counters, setup checklist, and the claim lifecycle. |
 | Review inbox | `/dashboard/review` | List-and-detail triage with keyboard shortcuts, evidence provenance, and approve, edit, reject, or publish. |
-| Connections | `/dashboard/connections` | Connector state, manual sync, and the planned connectors. |
+| Connections | `/dashboard/connections` | Live connector state, manual sync followed to completion, and the planned connectors. |
 | Settings | `/dashboard/settings` | Identity, visibility, appearance, and session. |
 | Public profile | `/{handle}` | Published claims with assurance and freshness, an embeddable badge, and structured data. |
+
+Connector state is read from `GET /v1/connectors`, which projects the caller's own source connections and each one's latest ingestion run. Credential material is never part of that projection: encrypted tokens live in a table the read does not touch. A queued sync is followed through `GET /v1/ingestion-runs/{run_id}` until it reaches a terminal status, so the interface reports what the worker actually did rather than what was requested.
 
 Light and dark themes are both first-class and applied before first paint. Navigation is available from anywhere with `Ctrl-K` (`⌘K` on macOS), and the review queue is fully keyboard-operable. See [frontend/README.md](frontend/README.md) for the design-system rules and the conventions a new surface must follow.
 

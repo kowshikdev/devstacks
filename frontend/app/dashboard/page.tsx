@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { toHeaderUser, useProfile } from "../../lib/hooks/useProfile";
 import { ApiError, getPendingClaims, type PendingClaimRevision } from "../../lib/api/client";
+import { useConnectors } from "../../lib/hooks/useConnectors";
 import { Avatar } from "../../components/ui/Avatar";
 import { ButtonLink } from "../../components/ui/Button";
 import { Card, CardBody, CardFooter, CardHeader } from "../../components/ui/Card";
@@ -51,6 +52,7 @@ const LIFECYCLE = [
 
 export default function DashboardPage() {
   const { profile, loading: profileLoading, error: profileError } = useProfile();
+  const { connectors } = useConnectors(Boolean(profile));
   const [claims, setClaims] = useState<PendingClaimRevision[] | null>(null);
   const [claimsError, setClaimsError] = useState<string | null>(null);
 
@@ -88,7 +90,7 @@ export default function DashboardPage() {
       action: null,
     },
     {
-      done: (claims?.length ?? 0) > 0 || evidenceCount > 0,
+      done: (connectors?.length ?? 0) > 0,
       title: "Connect a source",
       description: "GitHub is the golden path — commits, pull requests, and releases.",
       action: { href: "/dashboard/connect/github", label: "Connect GitHub" },
@@ -347,26 +349,70 @@ export default function DashboardPage() {
             </div>
           </Card>
 
-          <Card subtle>
-            <CardBody>
-              <div className="row gap-2 mb-2">
-                <SparkIcon size={15} className="text-accent" />
-                <p className="text-sm font-semibold">Add another source</p>
-              </div>
-              <p className="text-xs text-muted">
-                GitHub is live today. LinkedIn export, HackerRank certificates, and LeetCode
-                snapshots follow the same evidence contract.
-              </p>
-              <div className="mt-3">
-                <ButtonLink
-                  href="/dashboard/connections"
-                  size="sm"
-                  leadingIcon={<GitHubIcon size={14} />}
-                >
-                  Manage connections
+          <Card>
+            <CardHeader
+              title="Connectors"
+              actions={
+                <ButtonLink href="/dashboard/connections" size="sm" variant="invisible">
+                  Manage
                 </ButtonLink>
+              }
+            />
+            {connectors === null ? (
+              <CardBody>
+                <div className="stack gap-2">
+                  <Skeleton width="45%" height={12} />
+                  <Skeleton width="65%" height={10} />
+                </div>
+              </CardBody>
+            ) : connectors.length === 0 ? (
+              <CardBody>
+                <div className="row gap-2 mb-2">
+                  <SparkIcon size={15} className="text-accent" />
+                  <p className="text-sm font-semibold">No source connected</p>
+                </div>
+                <p className="text-xs text-muted">
+                  Evidence only exists once a connector has observed something. GitHub is the
+                  golden path today.
+                </p>
+                <div className="mt-3">
+                  <ButtonLink
+                    href="/dashboard/connect/github"
+                    size="sm"
+                    leadingIcon={<GitHubIcon size={14} />}
+                  >
+                    Connect GitHub
+                  </ButtonLink>
+                </div>
+              </CardBody>
+            ) : (
+              <div>
+                {connectors.map((connector) => (
+                  <div className="card__row" key={connector.id}>
+                    <GitHubIcon size={16} className="text-subtle shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold truncate">
+                        {connector.external_subject
+                          ? `@${connector.external_subject}`
+                          : connector.platform}
+                      </p>
+                      <p className="text-xs text-subtle mt-1">
+                        {connector.last_synced_at ? (
+                          <>
+                            Synced <RelativeTime value={connector.last_synced_at} />
+                          </>
+                        ) : (
+                          "Never synced"
+                        )}
+                      </p>
+                    </div>
+                    <Label tone={connector.connection_status === "active" ? "success" : "attention"}>
+                      {connector.connection_status}
+                    </Label>
+                  </div>
+                ))}
               </div>
-            </CardBody>
+            )}
           </Card>
         </div>
       </div>

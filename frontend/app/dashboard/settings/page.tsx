@@ -4,7 +4,6 @@ import { useState } from "react";
 
 import AppShell from "../../../components/AppShell";
 import { toHeaderUser, useProfile } from "../../../lib/hooks/useProfile";
-import { clearConnection } from "../../../lib/connections";
 import { signOut } from "../../../lib/supabase/client";
 import { useTheme, type ThemePreference } from "../../../components/ThemeProvider";
 import { Avatar } from "../../../components/ui/Avatar";
@@ -205,7 +204,6 @@ export default function SettingsPage() {
             <Button
               variant="danger"
               onClick={() => {
-                clearConnection();
                 void signOut()
                   .then(() => {
                     window.location.href = "/login";
