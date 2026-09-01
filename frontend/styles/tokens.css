@@ -1,0 +1,349 @@
+/*
+ * DevStacks design tokens.
+ *
+ * Two layers, deliberately separated:
+ *   1. Primitives  — raw scale values (--ds-gray-500). Never used directly in components.
+ *   2. Semantics   — role names (--fg-default, --canvas-subtle). Components use only these.
+ *
+ * Themes redefine the semantic layer only, so every component follows a theme
+ * without knowing a theme exists. Light is the base; dark is applied by
+ * [data-theme="dark"] and by the system preference when no explicit choice is set.
+ */
+
+:root {
+  /* ---------- Primitive: neutral ---------- */
+  --ds-gray-0: #ffffff;
+  --ds-gray-50: #f7f9f8;
+  --ds-gray-100: #eef2f0;
+  --ds-gray-200: #e0e6e3;
+  --ds-gray-300: #cdd6d1;
+  --ds-gray-400: #a6b3ac;
+  --ds-gray-500: #7d8b84;
+  --ds-gray-600: #5c6a63;
+  --ds-gray-700: #414d47;
+  --ds-gray-800: #29332e;
+  --ds-gray-900: #18201c;
+  --ds-gray-950: #0d1210;
+  --ds-gray-1000: #080b0a;
+
+  /* ---------- Primitive: brand (emerald) ---------- */
+  --ds-brand-50: #ecfdf5;
+  --ds-brand-100: #d1fae5;
+  --ds-brand-200: #a7f3d0;
+  --ds-brand-300: #6ee7b7;
+  --ds-brand-400: #34d399;
+  --ds-brand-500: #10b981;
+  --ds-brand-600: #059669;
+  --ds-brand-700: #047857;
+  --ds-brand-800: #065f46;
+  --ds-brand-900: #064e3b;
+
+  /* ---------- Primitive: status ---------- */
+  --ds-green-500: #1a7f37;
+  --ds-green-400: #3fb950;
+  --ds-amber-500: #9a6700;
+  --ds-amber-400: #d29922;
+  --ds-red-500: #cf222e;
+  --ds-red-400: #f85149;
+  --ds-blue-500: #0969da;
+  --ds-blue-400: #58a6ff;
+  --ds-purple-500: #8250df;
+  --ds-purple-400: #a371f7;
+
+  /* ---------- Space (4px base) ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+  --space-11: 80px;
+  --space-12: 112px;
+
+  /* ---------- Radius ---------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+  --radius-pill: 999px;
+
+  /* ---------- Type ---------- */
+  --font-family-sans: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-family-mono: var(--font-mono), ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  --font-family-serif: var(--font-serif), ui-serif, Georgia, serif;
+
+  --text-display: clamp(2.6rem, 5.4vw, 4.25rem);
+  --text-h1: clamp(1.85rem, 3.2vw, 2.5rem);
+  --text-h2: 1.5rem;
+  --text-h3: 1.185rem;
+  --text-h4: 1rem;
+  --text-body: 0.9375rem;
+  --text-sm: 0.8125rem;
+  --text-xs: 0.75rem;
+
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.7;
+
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+
+  /* ---------- Layout ---------- */
+  --container-sm: 560px;
+  --container-md: 768px;
+  --container-lg: 1024px;
+  --container-xl: 1280px;
+  --header-height: 60px;
+  --subnav-height: 48px;
+
+  /* ---------- Motion ---------- */
+  --duration-fast: 90ms;
+  --duration-base: 160ms;
+  --duration-slow: 280ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0.15, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ---------- Z-index ---------- */
+  --z-sticky: 100;
+  --z-header: 200;
+  --z-dropdown: 300;
+  --z-overlay: 400;
+  --z-dialog: 410;
+  --z-toast: 500;
+
+  color-scheme: light;
+}
+
+/* =========================================================================
+   Light theme — the base semantic layer.
+   ========================================================================= */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas-default: #ffffff;
+  --canvas-subtle: var(--ds-gray-50);
+  --canvas-inset: var(--ds-gray-100);
+  --canvas-overlay: #ffffff;
+  --canvas-backdrop: rgba(24, 32, 28, 0.45);
+
+  --fg-default: #16201b;
+  --fg-muted: var(--ds-gray-600);
+  --fg-subtle: var(--ds-gray-500);
+  --fg-on-emphasis: #ffffff;
+  --fg-link: var(--ds-brand-700);
+
+  --border-default: var(--ds-gray-200);
+  --border-muted: var(--ds-gray-100);
+  --border-strong: var(--ds-gray-300);
+
+  --accent-fg: var(--ds-brand-700);
+  --accent-emphasis: var(--ds-brand-600);
+  --accent-emphasis-hover: var(--ds-brand-700);
+  --accent-subtle: var(--ds-brand-50);
+  --accent-muted: var(--ds-brand-200);
+
+  --success-fg: var(--ds-green-500);
+  --success-emphasis: var(--ds-green-500);
+  --success-subtle: #e8f5ec;
+  --success-muted: #b7e0c2;
+
+  --attention-fg: var(--ds-amber-500);
+  --attention-emphasis: #bf8700;
+  --attention-subtle: #fdf5e2;
+  --attention-muted: #f0d9a4;
+
+  --danger-fg: var(--ds-red-500);
+  --danger-emphasis: var(--ds-red-500);
+  --danger-subtle: #fdeceb;
+  --danger-muted: #f5c4c0;
+
+  --info-fg: var(--ds-blue-500);
+  --info-subtle: #ddf4ff;
+  --info-muted: #b6e3ff;
+
+  --done-fg: var(--ds-purple-500);
+  --done-subtle: #f5eeff;
+  --done-muted: #d8c0f7;
+
+  --neutral-emphasis: var(--ds-gray-600);
+  --neutral-subtle: var(--ds-gray-100);
+
+  --btn-bg: #ffffff;
+  --btn-bg-hover: var(--ds-gray-50);
+  --btn-bg-active: var(--ds-gray-100);
+  --btn-border: var(--ds-gray-300);
+
+  --shadow-xs: 0 1px 0 rgba(24, 32, 28, 0.04);
+  --shadow-sm: 0 1px 2px rgba(24, 32, 28, 0.07), 0 1px 1px rgba(24, 32, 28, 0.04);
+  --shadow-md: 0 4px 12px rgba(24, 32, 28, 0.08), 0 1px 3px rgba(24, 32, 28, 0.05);
+  --shadow-lg: 0 12px 32px rgba(24, 32, 28, 0.12), 0 2px 8px rgba(24, 32, 28, 0.06);
+  --shadow-xl: 0 24px 64px rgba(24, 32, 28, 0.16);
+
+  --focus-ring: var(--ds-brand-600);
+  --focus-ring-shadow: 0 0 0 3px rgba(5, 150, 105, 0.28);
+
+  --skeleton-base: var(--ds-gray-100);
+  --skeleton-shine: var(--ds-gray-50);
+
+  --hero-glow: radial-gradient(60% 60% at 50% 0%, rgba(16, 185, 129, 0.14) 0%, rgba(16, 185, 129, 0) 100%);
+  --grid-line: rgba(24, 32, 28, 0.045);
+}
+
+/* =========================================================================
+   Dark theme — explicit choice wins in both directions.
+   ========================================================================= */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas-default: #0b0f0e;
+  --canvas-subtle: #101614;
+  --canvas-inset: #080b0a;
+  --canvas-overlay: #151c19;
+  --canvas-backdrop: rgba(4, 8, 6, 0.66);
+
+  --fg-default: #e7efec;
+  --fg-muted: #9db0a8;
+  --fg-subtle: #6d7f77;
+  --fg-on-emphasis: #04140d;
+  --fg-link: var(--ds-brand-300);
+
+  --border-default: #232c28;
+  --border-muted: #1a221e;
+  --border-strong: #36423b;
+
+  --accent-fg: var(--ds-brand-300);
+  --accent-emphasis: var(--ds-brand-400);
+  --accent-emphasis-hover: var(--ds-brand-300);
+  --accent-subtle: rgba(52, 211, 153, 0.12);
+  --accent-muted: rgba(52, 211, 153, 0.32);
+
+  --success-fg: var(--ds-green-400);
+  --success-emphasis: #238636;
+  --success-subtle: rgba(63, 185, 80, 0.13);
+  --success-muted: rgba(63, 185, 80, 0.34);
+
+  --attention-fg: var(--ds-amber-400);
+  --attention-emphasis: #9e6a03;
+  --attention-subtle: rgba(210, 153, 34, 0.13);
+  --attention-muted: rgba(210, 153, 34, 0.34);
+
+  --danger-fg: var(--ds-red-400);
+  --danger-emphasis: #da3633;
+  --danger-subtle: rgba(248, 81, 73, 0.12);
+  --danger-muted: rgba(248, 81, 73, 0.34);
+
+  --info-fg: var(--ds-blue-400);
+  --info-subtle: rgba(88, 166, 255, 0.12);
+  --info-muted: rgba(88, 166, 255, 0.34);
+
+  --done-fg: var(--ds-purple-400);
+  --done-subtle: rgba(163, 113, 247, 0.12);
+  --done-muted: rgba(163, 113, 247, 0.34);
+
+  --neutral-emphasis: #4a5751;
+  --neutral-subtle: rgba(157, 176, 168, 0.1);
+
+  --btn-bg: #171f1b;
+  --btn-bg-hover: #1e2723;
+  --btn-bg-active: #252f2a;
+  --btn-border: #2c352f;
+
+  --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 28px 72px rgba(0, 0, 0, 0.7);
+
+  --focus-ring: var(--ds-brand-400);
+  --focus-ring-shadow: 0 0 0 3px rgba(52, 211, 153, 0.32);
+
+  --skeleton-base: #182019;
+  --skeleton-shine: #202a25;
+
+  --hero-glow: radial-gradient(60% 60% at 50% 0%, rgba(16, 185, 129, 0.16) 0%, rgba(16, 185, 129, 0) 100%);
+  --grid-line: rgba(231, 239, 236, 0.04);
+}
+
+/* System preference, only when the visitor has not chosen explicitly. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    color-scheme: dark;
+
+    --canvas-default: #0b0f0e;
+    --canvas-subtle: #101614;
+    --canvas-inset: #080b0a;
+    --canvas-overlay: #151c19;
+    --canvas-backdrop: rgba(4, 8, 6, 0.66);
+
+    --fg-default: #e7efec;
+    --fg-muted: #9db0a8;
+    --fg-subtle: #6d7f77;
+    --fg-on-emphasis: #04140d;
+    --fg-link: var(--ds-brand-300);
+
+    --border-default: #232c28;
+    --border-muted: #1a221e;
+    --border-strong: #36423b;
+
+    --accent-fg: var(--ds-brand-300);
+    --accent-emphasis: var(--ds-brand-400);
+    --accent-emphasis-hover: var(--ds-brand-300);
+    --accent-subtle: rgba(52, 211, 153, 0.12);
+    --accent-muted: rgba(52, 211, 153, 0.32);
+
+    --success-fg: var(--ds-green-400);
+    --success-emphasis: #238636;
+    --success-subtle: rgba(63, 185, 80, 0.13);
+    --success-muted: rgba(63, 185, 80, 0.34);
+
+    --attention-fg: var(--ds-amber-400);
+    --attention-emphasis: #9e6a03;
+    --attention-subtle: rgba(210, 153, 34, 0.13);
+    --attention-muted: rgba(210, 153, 34, 0.34);
+
+    --danger-fg: var(--ds-red-400);
+    --danger-emphasis: #da3633;
+    --danger-subtle: rgba(248, 81, 73, 0.12);
+    --danger-muted: rgba(248, 81, 73, 0.34);
+
+    --info-fg: var(--ds-blue-400);
+    --info-subtle: rgba(88, 166, 255, 0.12);
+    --info-muted: rgba(88, 166, 255, 0.34);
+
+    --done-fg: var(--ds-purple-400);
+    --done-subtle: rgba(163, 113, 247, 0.12);
+    --done-muted: rgba(163, 113, 247, 0.34);
+
+    --neutral-emphasis: #4a5751;
+    --neutral-subtle: rgba(157, 176, 168, 0.1);
+
+    --btn-bg: #171f1b;
+    --btn-bg-hover: #1e2723;
+    --btn-bg-active: #252f2a;
+    --btn-border: #2c352f;
+
+    --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+    --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+    --shadow-xl: 0 28px 72px rgba(0, 0, 0, 0.7);
+
+    --focus-ring: var(--ds-brand-400);
+    --focus-ring-shadow: 0 0 0 3px rgba(52, 211, 153, 0.32);
+
+    --skeleton-base: #182019;
+    --skeleton-shine: #202a25;
+
+    --hero-glow: radial-gradient(60% 60% at 50% 0%, rgba(16, 185, 129, 0.16) 0%, rgba(16, 185, 129, 0) 100%);
+    --grid-line: rgba(231, 239, 236, 0.04);
+  }
+}

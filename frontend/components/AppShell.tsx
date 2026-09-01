@@ -1,52 +1,76 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { signOut } from "../lib/supabase/client";
+import { CommandPalette } from "./CommandPalette";
+import { SiteFooter } from "./SiteFooter";
+import { SiteHeader, type HeaderUser } from "./SiteHeader";
+import { NavTabs, type TabItem } from "./ui/Tabs";
+import { GearIcon, GraphIcon, InboxIcon, PlugIcon } from "./ui/Icon";
 
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/dashboard/connect/github", label: "Connect GitHub" },
-  { href: "/dashboard/review", label: "Review" },
+const SUBNAV: TabItem[] = [
+  { href: "/dashboard", label: "Overview", icon: <GraphIcon size={15} /> },
+  { href: "/dashboard/review", label: "Review", icon: <InboxIcon size={15} />, prefix: true },
+  { href: "/dashboard/connections", label: "Connections", icon: <PlugIcon size={15} />, prefix: true },
+  { href: "/dashboard/settings", label: "Settings", icon: <GearIcon size={15} /> },
 ];
 
-export default function AppShell({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
+/**
+ * The signed-in application frame: global header, product sub-navigation,
+ * command palette, and footer. Pages render only their own content.
+ */
+export default function AppShell({
+  children,
+  user,
+  reviewCount,
+}: {
+  children: ReactNode;
+  user?: HeaderUser | null;
+  reviewCount?: number;
+}) {
+  const subnav = SUBNAV.map((item) =>
+    item.href === "/dashboard/review" && reviewCount ? { ...item, count: reviewCount } : item
+  );
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <Link href="/dashboard" className="wordmark">
-          <svg className="wordmark-mark" viewBox="0 0 26 26" fill="none" aria-hidden="true">
-            <circle cx="6" cy="13" r="3.4" stroke="#e9efec" strokeWidth="1.6" />
-            <circle cx="20" cy="6" r="2.6" fill="#34d399" />
-            <circle cx="20" cy="20" r="2.6" fill="#34d399" />
-            <path d="M9 11.6L17.2 7.3M9 14.4L17.2 18.7" stroke="#37423c" strokeWidth="1.4" />
-          </svg>
-          DevStacks
-        </Link>
-        <nav className="topnav">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={pathname === item.href ? "topnav-link active" : "topnav-link"}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-        <button
-          type="button"
-          className="link-button"
-          onClick={() => signOut().then(() => (window.location.href = "/login"))}
-        >
-          Sign out
-        </button>
-      </header>
-      <div className="shell-body">{children}</div>
+    <div className="app-frame">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <SiteHeader user={user} />
+      <div className="subnav">
+        <div className="container">
+          <NavTabs items={subnav} label="Dashboard sections" />
+        </div>
+      </div>
+      <main className="app-main" id="main">
+        <div className="container">{children}</div>
+      </main>
+      <SiteFooter />
+      <CommandPalette />
+    </div>
+  );
+}
+
+/** The public frame: same chrome, no product sub-navigation. */
+export function PublicShell({
+  children,
+  bare,
+}: {
+  children: ReactNode;
+  bare?: boolean;
+}) {
+  return (
+    <div className="app-frame">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <SiteHeader variant="marketing" />
+      <main className={bare ? undefined : "app-main"} id="main" style={{ flex: 1 }}>
+        {children}
+      </main>
+      <SiteFooter />
+      <CommandPalette />
     </div>
   );
 }

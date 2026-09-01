@@ -28,9 +28,28 @@ Frontend requirements use Node.js 22 or newer.
 Push-Location frontend
 npm install
 npm run dev
+npm run typecheck
 ```
 
 The frontend runs at `http://localhost:3000`; the API health endpoint is `http://localhost:8000/health`.
+
+## Product Surface
+
+The frontend is a full product application rather than a scaffold. It ships its own design system and component library, and every surface is built to the same standard.
+
+| Surface | Route | What it does |
+| --- | --- | --- |
+| Marketing | `/` | Lifecycle, assurance model, and FAQ, with the live-preview call to action. |
+| Live preview | `/try`, `/try/{username}` | Public GitHub facts, unsaved and unpublished, for a visitor with no account. |
+| Authentication | `/login` | GitHub OAuth and email/password, in one split-screen surface. |
+| Onboarding | `/onboarding` | Handle claim and first connector, as a progressed wizard. |
+| Overview | `/dashboard` | Evidence and review counters, setup checklist, and the claim lifecycle. |
+| Review inbox | `/dashboard/review` | List-and-detail triage with keyboard shortcuts, evidence provenance, and approve, edit, reject, or publish. |
+| Connections | `/dashboard/connections` | Connector state, manual sync, and the planned connectors. |
+| Settings | `/dashboard/settings` | Identity, visibility, appearance, and session. |
+| Public profile | `/{handle}` | Published claims with assurance and freshness, an embeddable badge, and structured data. |
+
+Light and dark themes are both first-class and applied before first paint. Navigation is available from anywhere with `Ctrl-K` (`⌘K` on macOS), and the review queue is fully keyboard-operable. See [frontend/README.md](frontend/README.md) for the design-system rules and the conventions a new surface must follow.
 
 ## Supabase Project
 
