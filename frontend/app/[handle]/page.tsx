@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
@@ -39,9 +40,13 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     : "Continuously verified developer evidence graph.";
 
   return {
-    title: `${displayName} (@${handle})`,
+    title: profile ? `${displayName} (@${handle})` : "Profile not found",
     description,
     alternates: { canonical: `/${handle}` },
+    // Next 16 answers notFound() from a root-level dynamic segment with a 200,
+    // so this page can render as a soft 404. Keep those out of the index; the
+    // API remains the authoritative signal and answers 404 correctly.
+    robots: profile ? undefined : { index: false, follow: false },
     openGraph: {
       title: `${displayName} (@${handle}) · DevStacks`,
       description,
@@ -180,7 +185,9 @@ export default async function PublicProfilePage({ params }: PageProps) {
                 />
               </Card>
             ) : (
-              profile.claims.map((claim) => <ClaimCard claim={claim} key={claim.id} />)
+              profile.claims.map((claim) => (
+                <ClaimCard claim={claim} handle={profile.handle} key={claim.id} />
+              ))
             )}
           </div>
 
@@ -247,7 +254,8 @@ export default async function PublicProfilePage({ params }: PageProps) {
                 <li className="row row--start gap-2 text-xs text-muted">
                   <FingerprintIcon size={14} className="shrink-0" />
                   <span>
-                    Every claim traces back to content-hashed, immutable evidence versions.
+                    Every claim traces back to content-hashed evidence. Open any{" "}
+                    <strong>evidence trail</strong> to check the chain yourself.
                   </span>
                 </li>
                 <li className="row row--start gap-2 text-xs text-muted">
@@ -265,7 +273,7 @@ export default async function PublicProfilePage({ params }: PageProps) {
   );
 }
 
-function ClaimCard({ claim }: { claim: PublishedClaim }) {
+function ClaimCard({ claim, handle }: { claim: PublishedClaim; handle: string }) {
   const stale = claim.freshness_status !== null && claim.freshness_status !== "current";
 
   return (
@@ -291,6 +299,15 @@ function ClaimCard({ claim }: { claim: PublishedClaim }) {
           Verified <RelativeTime value={claim.last_verified_at} />
         </span>
         <span className="font-mono">{formatAbsolute(claim.last_verified_at)} UTC</span>
+        {/* The claim is only as good as what backs it, so the chain is one click away. */}
+        <Link
+          href={`/${handle}/claims/${claim.id}`}
+          className="row gap-1 font-semibold"
+          style={{ marginLeft: "auto" }}
+        >
+          <GraphIcon size={13} />
+          Evidence trail
+        </Link>
       </div>
     </article>
   );

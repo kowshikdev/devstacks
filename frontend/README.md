@@ -84,6 +84,16 @@ resolves it), error (with what failed and what to do), and loaded.
 
 Review shortcuts are ignored while a field or dialog has focus.
 
+## Known framework limitation
+
+Next 16 answers `notFound()` from a **root-level** dynamic segment with HTTP 200,
+even though the not-found UI renders correctly; the same call from a nested
+segment returns 404 as expected. This affects `/{handle}` and the claim trails
+nested under it. Until it is fixed upstream, those routes emit
+`robots: noindex, nofollow` when the resource is missing, so a soft 404 is never
+indexed. The API is the authoritative signal for machine consumers and returns a
+real 404, which is covered by tests.
+
 ## Adding a surface
 
 1. Add the route under `app/`.

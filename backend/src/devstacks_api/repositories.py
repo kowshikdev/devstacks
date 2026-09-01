@@ -62,6 +62,40 @@ class PublishedClaim:
 
 
 @dataclass(frozen=True)
+class PublishedEvidence:
+    """One evidence version behind a published claim, safe for public display.
+
+    Carries no observed payload and no source reference: the content hash is
+    what proves the observation is fixed, without disclosing what it points at.
+    """
+
+    evidence_version_id: str
+    relation: str
+    source_type: str
+    content_hash: str
+    version_number: int
+    connector_version: str
+    assurance_class: str
+    validity: str
+    observed_at: str | None
+
+
+@dataclass(frozen=True)
+class PublishedClaimTrail:
+    handle: str
+    display_name: str | None
+    claim_revision_id: str
+    category: str
+    statement: str
+    verification_status: str
+    verifier_score: float | None
+    verified_at: str
+    freshness_status: str | None
+    published_at: str | None
+    evidence: tuple[PublishedEvidence, ...]
+
+
+@dataclass(frozen=True)
 class PublishedProfile:
     id: str
     handle: str
@@ -119,6 +153,13 @@ class ProfileRepository(Protocol):
 class PublicProfileRepository(Protocol):
     async def get_published_profile(self, handle: str) -> PublishedProfile | None:
         """Return a public projection containing published claims only."""
+
+    async def get_published_claim_trail(
+        self,
+        handle: str,
+        claim_revision_id: str,
+    ) -> PublishedClaimTrail | None:
+        """Return the evidence trail behind one published claim."""
 
 
 @dataclass(frozen=True)
@@ -542,6 +583,145 @@ class SupabasePublicProfileRepository:
             freshness_status=freshness_status,
             last_verified_at=last_verified_at,
         )
+
+    async def get_published_claim_trail(
+        self,
+        handle: str,
+        claim_revision_id: str,
+    ) -> PublishedClaimTrail | None:
+        if not handle or not claim_revision_id:
+            return None
+        records = await self._call_projection(
+            "get_published_claim_evidence",
+            {"p_handle": handle, "p_claim_revision_id": claim_revision_id},
+        )
+        if not records:
+            return None
+
+        first = records[0]
+        if first.get("handle") != handle or first.get("claim_revision_id") != claim_revision_id:
+            raise RepositoryUnavailableError("Supabase public claim response violates scope")
+
+        category = first.get("category")
+        statement = first.get("statement")
+        verification_status = first.get("verification_status")
+        verified_at = first.get("verified_at")
+        if not all(
+            isinstance(value, str) and value
+            for value in (category, statement, verification_status, verified_at)
+        ):
+            raise RepositoryUnavailableError("Supabase public claim response is incomplete")
+
+        display_name = first.get("display_name")
+        # A claim with no linked evidence still projects one row, with the
+        # evidence columns null; that is an empty trail, not a broken response.
+        evidence = tuple(
+            parsed
+            for parsed in (self._parse_published_evidence(record) for record in records)
+            if parsed is not None
+        )
+        return PublishedClaimTrail(
+            handle=handle,
+            display_name=display_name if isinstance(display_name, str) else None,
+            claim_revision_id=claim_revision_id,
+            category=str(category),
+            statement=str(statement),
+            verification_status=str(verification_status),
+            verifier_score=self._score(first.get("verifier_score")),
+            verified_at=str(verified_at),
+            freshness_status=self._optional_text(first.get("freshness_status")),
+            published_at=self._optional_text(first.get("published_at")),
+            evidence=evidence,
+        )
+
+    async def _call_projection(
+        self,
+        name: str,
+        payload: dict[str, str],
+    ) -> list[dict[str, object]]:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(f"/rest/v1/rpc/{name}", json=payload)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase public claim query failed") from error
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase public claim query failed")
+        try:
+            records = response.json()
+        except ValueError as error:
+            raise RepositoryUnavailableError("Supabase public claim response is invalid") from error
+        if not isinstance(records, list):
+            raise RepositoryUnavailableError("Supabase public claim response is invalid")
+        for record in records:
+            if not isinstance(record, dict):
+                raise RepositoryUnavailableError("Supabase public claim response is invalid")
+        return records
+
+    @classmethod
+    def _parse_published_evidence(cls, record: dict[str, object]) -> PublishedEvidence | None:
+        evidence_version_id = record.get("evidence_version_id")
+        if evidence_version_id is None:
+            return None
+
+        relation = record.get("relation")
+        source_type = record.get("source_type")
+        content_hash = record.get("content_hash")
+        connector_version = record.get("connector_version")
+        assurance_class = record.get("assurance_class")
+        validity = record.get("validity")
+        version_number = record.get("version_number")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                evidence_version_id,
+                relation,
+                source_type,
+                content_hash,
+                connector_version,
+                assurance_class,
+                validity,
+            )
+        ):
+            raise RepositoryUnavailableError("Supabase public claim evidence is incomplete")
+        if not isinstance(version_number, int):
+            raise RepositoryUnavailableError("Supabase public claim evidence is incomplete")
+
+        return PublishedEvidence(
+            evidence_version_id=str(evidence_version_id),
+            relation=str(relation),
+            source_type=str(source_type),
+            content_hash=str(content_hash),
+            version_number=version_number,
+            connector_version=str(connector_version),
+            assurance_class=str(assurance_class),
+            validity=str(validity),
+            observed_at=cls._optional_text(record.get("observed_at")),
+        )
+
+    @staticmethod
+    def _optional_text(value: object) -> str | None:
+        return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _score(value: object) -> float | None:
+        # PostgREST renders numeric as a JSON string often enough that a plain
+        # isinstance check would silently drop a real score.
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
 
 
 class SupabaseAuditRepository:

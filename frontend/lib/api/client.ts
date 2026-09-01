@@ -105,6 +105,43 @@ export function getPublicProfile(handle: string): Promise<PublishedProfile> {
   return request<PublishedProfile>(`/v1/public/profiles/${encodeURIComponent(handle)}`, {}, false);
 }
 
+export interface PublishedEvidence {
+  evidence_version_id: string;
+  relation: "supports" | "contradicts" | "context";
+  source_type: string;
+  content_hash: string;
+  version_number: number;
+  connector_version: string;
+  assurance_class: string;
+  validity: string;
+  observed_at: string | null;
+}
+
+export interface PublishedClaimTrail {
+  handle: string;
+  display_name: string | null;
+  claim_revision_id: string;
+  category: string;
+  statement: string;
+  verification_status: string;
+  verifier_score: number | null;
+  verified_at: string;
+  freshness_status: string | null;
+  published_at: string | null;
+  evidence: PublishedEvidence[];
+}
+
+export function getPublicClaimTrail(
+  handle: string,
+  claimRevisionId: string
+): Promise<PublishedClaimTrail> {
+  return request<PublishedClaimTrail>(
+    `/v1/public/profiles/${encodeURIComponent(handle)}/claims/${encodeURIComponent(claimRevisionId)}`,
+    {},
+    false
+  );
+}
+
 export type IngestionRunStatus =
   | "queued"
   | "running"

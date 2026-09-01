@@ -351,27 +351,30 @@ async def create_profile(
     }
 
 
+def _public_profile_repository(request: Request) -> PublicProfileRepository:
+    repository: PublicProfileRepository | None = getattr(
+        request.app.state,
+        "public_profile_repository",
+        None,
+    )
+    if repository is not None:
+        return repository
+    try:
+        return SupabasePublicProfileRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Public profile service is unavailable",
+        ) from error
+
+
 @app.get("/v1/public/profiles/{handle}", tags=["public-profiles"])
 async def published_profile(
     handle: str,
     request: Request,
 ) -> dict[str, str | None | list[dict[str, str | None]]]:
     """Return a read-only projection of published claims for a public profile."""
-    repository: PublicProfileRepository | None = getattr(
-        request.app.state,
-        "public_profile_repository",
-        None,
-    )
-    if repository is None:
-        try:
-            repository = SupabasePublicProfileRepository(
-                SupabaseServiceSettings.from_environment()
-            )
-        except RepositoryUnavailableError as error:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Public profile service is unavailable",
-            ) from error
+    repository = _public_profile_repository(request)
     try:
         profile = await repository.get_published_profile(handle)
     except RepositoryUnavailableError as error:
@@ -398,6 +401,60 @@ async def published_profile(
                 "last_verified_at": claim.last_verified_at,
             }
             for claim in profile.claims
+        ],
+    }
+
+
+@app.get("/v1/public/profiles/{handle}/claims/{claim_revision_id}", tags=["public-profiles"])
+async def published_claim_evidence(
+    handle: str,
+    claim_revision_id: str,
+    request: Request,
+) -> dict[str, object]:
+    """Return the evidence trail behind one published claim.
+
+    This is the reader-facing half of the product's central promise: a claim is
+    only worth what backs it, so the chain is public. Observed payloads and
+    source references stay private — a content hash proves the observation is
+    fixed without disclosing what it points at.
+    """
+    repository = _public_profile_repository(request)
+    try:
+        trail = await repository.get_published_claim_trail(handle, claim_revision_id)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Public profile service is unavailable",
+        ) from error
+    if trail is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Published claim not found",
+        )
+    return {
+        "handle": trail.handle,
+        "display_name": trail.display_name,
+        "claim_revision_id": trail.claim_revision_id,
+        "category": trail.category,
+        "statement": trail.statement,
+        "verification_status": trail.verification_status,
+        "verifier_score": trail.verifier_score,
+        "verified_at": trail.verified_at,
+        "freshness_status": trail.freshness_status,
+        "published_at": trail.published_at,
+        "evidence": [
+            {
+                "evidence_version_id": item.evidence_version_id,
+                "relation": item.relation,
+                "source_type": item.source_type,
+                "content_hash": item.content_hash,
+                "version_number": item.version_number,
+                "connector_version": item.connector_version,
+                "assurance_class": item.assurance_class,
+                "validity": item.validity,
+                "observed_at": item.observed_at,
+            }
+            for item in trail.evidence
         ],
     }
 
@@ -434,21 +491,7 @@ def _render_badge_svg(label: str, value: str, value_color: str) -> str:
 @app.get("/v1/public/profiles/{handle}/badge.svg", tags=["public-profiles"])
 async def public_profile_badge(handle: str, request: Request) -> Response:
     """Render an embeddable README badge showing verified claim count for a public profile."""
-    repository: PublicProfileRepository | None = getattr(
-        request.app.state,
-        "public_profile_repository",
-        None,
-    )
-    if repository is None:
-        try:
-            repository = SupabasePublicProfileRepository(
-                SupabaseServiceSettings.from_environment()
-            )
-        except RepositoryUnavailableError as error:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Public profile service is unavailable",
-            ) from error
+    repository = _public_profile_repository(request)
     try:
         profile = await repository.get_published_profile(handle)
     except RepositoryUnavailableError as error:

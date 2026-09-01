@@ -48,6 +48,13 @@ The frontend is a full product application rather than a scaffold. It ships its 
 | Connections | `/dashboard/connections` | Live connector state, manual sync followed to completion, and the planned connectors. |
 | Settings | `/dashboard/settings` | Identity, visibility, appearance, and session. |
 | Public profile | `/{handle}` | Published claims with assurance and freshness, an embeddable badge, and structured data. |
+| Evidence trail | `/{handle}/claims/{id}` | The chain behind one published claim: every linked observation, its content hash, and the verification decision. |
+
+### Evidence trails
+
+Any reader can open the chain behind a published claim without an account. `GET /v1/public/profiles/{handle}/claims/{claim_revision_id}` projects every linked observation — its relation to the claim, source type, content hash, connector version, assurance class, and validity — alongside the verification decision that let the claim publish. Contradicting evidence is shown next to supporting evidence, because concealing it would make the rest worth nothing.
+
+Two things stay private by construction: the observed payload, and the source reference. A reference can name a private repository, so publishing it would disclose repository names the owner never chose to reveal. The content hash carries the property that matters instead — it proves the observation is fixed, and it changes if the observation changes — without that disclosure. A migration-contract test asserts the projection cannot select either column.
 
 Connector state is read from `GET /v1/connectors`, which projects the caller's own source connections and each one's latest ingestion run. Credential material is never part of that projection: encrypted tokens live in a table the read does not touch. A queued sync is followed through `GET /v1/ingestion-runs/{run_id}` until it reaches a terminal status, so the interface reports what the worker actually did rather than what was requested.
 
