@@ -49,6 +49,25 @@ The frontend is a full product application rather than a scaffold. It ships its 
 | Settings | `/dashboard/settings` | Identity, visibility, appearance, and session. |
 | Public profile | `/{handle}` | Published claims with assurance and freshness, an embeddable badge, and structured data. |
 | Evidence trail | `/{handle}/claims/{id}` | The chain behind one published claim: every linked observation, its content hash, and the verification decision. |
+| Community | `/community`, `/community/{slug}`, `/community/thread/{id}` | Spaces for help, architecture, showcase, and jobs, with a composer that checks a draft before it is sent. |
+
+### Community
+
+Spaces for getting unstuck, arguing about architecture, showing work, and hiring. Three things make it different from a forum with a profanity filter bolted on.
+
+**Voice is earned by evidence.** A post carries the author's verified, topic-matched claims rather than a karma score. A space declares the claim categories it is about, and a member holding a verified claim in one of them is shown as such beside their words. Standing comes from what someone shipped and DevStacks checked, not from how long they have been posting.
+
+**The composer is a linter, not a trapdoor.** `POST /v1/community/preflight` judges a draft without storing it, so the composer warns while the author can still fix the problem. Every warning names the rule that fired and says what to do about it.
+
+**Moderation shows its work.** A post is written together with the verdict that admitted it, and the individual signals are stored alongside. An author can always see why their own post was actioned; nobody is moderated in secret.
+
+The guardrails themselves live in `devstacks_domain/moderation.py` and are deterministic, in keeping with the rule that application code owns policy. Three judgements shape them:
+
+- **Profanity is not abuse.** "This fucking build is broken" is frustration at a machine and is allowed. "You're a fucking idiot" is aimed at a person and is held. Conflating the two drives out candour and keeps the cruelty, because cruel people simply stop swearing.
+- **A leaked credential is an emergency, not an offence.** GitHub tokens, AWS keys, private keys, JWTs, and credentials in connection strings are blocked at the highest severity, the excerpt is redacted before it is ever echoed back, and the author is told to rotate it. The block protects the person who wrote the post.
+- **A model never decides.** An `AdvisorySignal` from a classifier is recorded and can raise a post to human review, but is capped below `block` in code — nothing is removed from this community on a model's say-so alone.
+
+Matching is anchored to whole words after Unicode, leetspeak, zero-width, repeated-character, and spaced-letter folding, so `f.u.c.k` is caught while Scunthorpe, "assess", and "classic" are not. The default lexicon ships ordinary profanity and insults only; hate terms are supplied by the operator at deployment rather than committed to a public repository.
 
 ### Evidence trails
 

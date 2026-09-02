@@ -31,6 +31,9 @@ from .github_webhook_service import (
 from .github_webhooks import GitHubWebhookError, GitHubWebhookSettings, GitHubWebhookUnavailableError
 from .rate_limit import InMemoryRateLimiter
 from .repositories import (
+    CommunityPost,
+    CommunityRepository,
+    CommunitySpace,
     ConnectorRepository,
     ConnectorRun,
     ConnectorSummary,
@@ -39,6 +42,7 @@ from .repositories import (
     RepositoryUnavailableError,
     SupabaseAgentRunRepository,
     SupabaseClaimRepository,
+    SupabaseCommunityRepository,
     SupabaseConnectorRepository,
     SupabaseGitHubAuthorizationRepository,
     SupabaseGitHubWebhookRepository,
@@ -53,6 +57,7 @@ from .repositories import (
 
 from devstacks_domain import (
     EvidenceValidity,
+    ModerationVerdict,
     FernetTokenCipher,
     ProvenanceError,
     PublicationContext,
@@ -63,6 +68,7 @@ from devstacks_domain import (
     TenantContext,
     TokenCipherError,
     TransitionError,
+    evaluate as evaluate_post,
     VerificationStatus,
 )
 
@@ -456,6 +462,231 @@ async def published_claim_evidence(
             }
             for item in trail.evidence
         ],
+    }
+
+
+def get_community_repository(request: Request) -> CommunityRepository:
+    repository: CommunityRepository | None = getattr(
+        request.app.state,
+        "community_repository",
+        None,
+    )
+    if repository is not None:
+        return repository
+    try:
+        return SupabaseCommunityRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+
+
+def _space_projection(space: CommunitySpace) -> dict[str, object]:
+    return {
+        "slug": space.slug,
+        "name": space.name,
+        "description": space.description,
+        "topic_categories": list(space.topic_categories),
+        "allowed_intents": list(space.allowed_intents),
+    }
+
+
+def _post_projection(post: CommunityPost) -> dict[str, object]:
+    return {
+        "id": post.id,
+        "space_slug": post.space_slug,
+        "parent_post_id": post.parent_post_id,
+        "title": post.title,
+        "body": post.body,
+        "intent": post.intent,
+        "reply_count": post.reply_count,
+        "created_at": post.created_at,
+        "author": {
+            "handle": post.author.handle,
+            "display_name": post.author.display_name,
+            "verified_categories": list(post.author.verified_categories),
+        },
+    }
+
+
+def _verdict_projection(verdict: ModerationVerdict) -> dict[str, object]:
+    return {
+        "action": str(verdict.action),
+        "severity": str(verdict.severity),
+        "intent": str(verdict.intent),
+        "rationale": verdict.rationale,
+        "policy_version": verdict.policy_version,
+        "signals": [
+            {
+                "kind": str(signal.kind),
+                "severity": str(signal.severity),
+                "rule_id": signal.rule_id,
+                "explanation": signal.explanation,
+                "excerpt": signal.excerpt,
+            }
+            for signal in verdict.signals
+        ],
+    }
+
+
+@app.get("/v1/community/spaces", tags=["community"])
+async def list_community_spaces(request: Request) -> dict[str, object]:
+    """List the spaces open for posting. Public: reading needs no account."""
+    repository = get_community_repository(request)
+    try:
+        spaces = await repository.list_spaces()
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+    return {"spaces": [_space_projection(space) for space in spaces]}
+
+
+@app.get("/v1/community/spaces/{slug}", tags=["community"])
+async def get_community_space(slug: str, request: Request) -> dict[str, object]:
+    """Return one space and its published threads."""
+    repository = get_community_repository(request)
+    try:
+        space = await repository.get_space(slug)
+        if space is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Space not found")
+        threads = await repository.list_threads(slug, 50)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+    return {
+        "space": _space_projection(space),
+        "threads": [_post_projection(post) for post in threads],
+    }
+
+
+@app.get("/v1/community/posts/{post_id}", tags=["community"])
+async def get_community_thread(post_id: str, request: Request) -> dict[str, object]:
+    """Return a published thread and its published replies."""
+    repository = get_community_repository(request)
+    try:
+        posts = await repository.get_thread(post_id)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+    if not posts:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return {
+        "thread": _post_projection(posts[0]),
+        "replies": [_post_projection(post) for post in posts[1:]],
+    }
+
+
+class GuardrailPreflightBody(BaseModel):
+    body: str
+
+
+@app.post("/v1/community/preflight", tags=["community"])
+async def preflight_community_post(
+    payload: GuardrailPreflightBody,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, object]:
+    """Judge a draft without storing it, so the composer can warn before submit.
+
+    Telling someone why a post will be stopped, before they send it, is the
+    difference between a guardrail and a trapdoor. Nothing here is persisted.
+    """
+    try:
+        verdict = evaluate_post(payload.body)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+    return _verdict_projection(verdict)
+
+
+class CreatePostBody(BaseModel):
+    body: str
+    title: str | None = None
+    parent_post_id: str | None = None
+
+
+@app.post("/v1/community/spaces/{slug}/posts", tags=["community"])
+async def create_community_post(
+    slug: str,
+    payload: CreatePostBody,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, object]:
+    """Create a thread or a reply, subject to the guardrails.
+
+    The verdict is recorded with the post whatever it says, so a held or blocked
+    post keeps the reason it was actioned and the author can see it.
+    """
+    is_reply = payload.parent_post_id is not None
+    title = None if is_reply else (payload.title or "").strip()
+    if not is_reply and not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A thread needs a title",
+        )
+
+    try:
+        # The title is judged alongside the body: hostility in a headline is
+        # still hostility, and it is the part everyone reads.
+        verdict = evaluate_post(f"{title}\n\n{payload.body}" if title else payload.body)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    repository = get_community_repository(request)
+    try:
+        space = await repository.get_space(slug)
+        if space is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Space not found")
+
+        # A space may accept only certain kinds of post. Recruitment in a help
+        # space is not a moral failing, it is just the wrong room.
+        #
+        # This is routing, not moderation, so it only applies to a post that
+        # would otherwise be published. Anything the guardrails already caught
+        # follows the moderation path instead, where the author is told what
+        # actually happened rather than that the room was wrong.
+        if (
+            space.allowed_intents
+            and verdict.publishable
+            and str(verdict.intent) not in space.allowed_intents
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"This reads as a {str(verdict.intent).replace('_', ' ')}, which "
+                    f"{space.name} does not accept."
+                ),
+            )
+
+        record = await repository.create_post(
+            tenant,
+            slug,
+            payload.parent_post_id,
+            title or None,
+            payload.body,
+            verdict,
+        )
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    return {
+        "post_id": record.post_id,
+        "decision_id": record.decision_id,
+        "published": verdict.publishable,
+        "verdict": _verdict_projection(verdict),
     }
 
 

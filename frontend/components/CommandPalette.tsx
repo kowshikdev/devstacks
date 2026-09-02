@@ -13,6 +13,7 @@ import {
   SearchIcon,
   SunIcon,
   UserIcon,
+  UsersIcon,
 } from "./ui/Icon";
 import { useTheme } from "./ThemeProvider";
 
@@ -85,6 +86,14 @@ export function CommandPalette() {
         icon: <GearIcon />,
         keywords: "settings profile account handle visibility",
         run: go("/dashboard/settings"),
+      },
+      {
+        id: "community",
+        label: "Open community",
+        hint: "Spaces",
+        icon: <UsersIcon />,
+        keywords: "community spaces discussion help jobs forum",
+        run: go("/community"),
       },
       {
         id: "preview",

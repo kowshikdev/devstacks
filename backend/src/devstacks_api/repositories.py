@@ -150,6 +150,72 @@ class ProfileRepository(Protocol):
         """Create the one profile row for an authenticated subject that has none yet."""
 
 
+@dataclass(frozen=True)
+class CommunitySpace:
+    id: str
+    slug: str
+    name: str
+    description: str
+    topic_categories: tuple[str, ...]
+    allowed_intents: tuple[str, ...]
+    thread_count: int = 0
+
+
+@dataclass(frozen=True)
+class CommunityAuthor:
+    profile_id: str
+    handle: str
+    display_name: str | None
+    #: Published claim categories this author holds, used to show topic-matched
+    #: standing instead of a participation score.
+    verified_categories: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CommunityPost:
+    id: str
+    space_slug: str
+    parent_post_id: str | None
+    title: str | None
+    body: str
+    intent: str
+    visibility: str
+    reply_count: int
+    created_at: str
+    author: CommunityAuthor
+
+
+@dataclass(frozen=True)
+class CommunityPostRecord:
+    post_id: str
+    decision_id: str
+
+
+class CommunityRepository(Protocol):
+    async def list_spaces(self) -> tuple[CommunitySpace, ...]:
+        """Return every space open for posting."""
+
+    async def get_space(self, slug: str) -> CommunitySpace | None:
+        """Return one space by its stable slug."""
+
+    async def list_threads(self, slug: str, limit: int) -> tuple[CommunityPost, ...]:
+        """Return published threads in a space, newest first."""
+
+    async def get_thread(self, post_id: str) -> tuple[CommunityPost, ...]:
+        """Return a published thread followed by its published replies."""
+
+    async def create_post(
+        self,
+        tenant: TenantContext,
+        space_slug: str,
+        parent_post_id: str | None,
+        title: str | None,
+        body: str,
+        verdict: object,
+    ) -> CommunityPostRecord:
+        """Persist a post together with the verdict that admitted it."""
+
+
 class PublicProfileRepository(Protocol):
     async def get_published_profile(self, handle: str) -> PublishedProfile | None:
         """Return a public projection containing published claims only."""
@@ -355,6 +421,294 @@ class SupabaseProfileRepository:
             display_name=response_display_name if isinstance(response_display_name, str) else None,
             is_public=is_public,
         )
+
+
+class SupabaseCommunityRepository:
+    """Server-only reader and writer for community spaces and posts."""
+
+    _SPACE_FIELDS = "id,slug,name,description,topic_categories,allowed_intents"
+    _POST_FIELDS = (
+        "id,space_id,parent_post_id,title,body,intent,visibility,reply_count,created_at,profile_id"
+    )
+
+    def __init__(
+        self,
+        settings: SupabaseServiceSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def list_spaces(self) -> tuple[CommunitySpace, ...]:
+        records = await self._select(
+            "community_spaces",
+            {"is_archived": "eq.false", "select": self._SPACE_FIELDS, "order": "slug.asc"},
+        )
+        return tuple(self._space(record) for record in records)
+
+    async def get_space(self, slug: str) -> CommunitySpace | None:
+        if not slug:
+            return None
+        records = await self._select(
+            "community_spaces",
+            {"slug": f"eq.{slug}", "is_archived": "eq.false", "select": self._SPACE_FIELDS},
+        )
+        return self._space(records[0]) if records else None
+
+    async def list_threads(self, slug: str, limit: int = 50) -> tuple[CommunityPost, ...]:
+        space = await self.get_space(slug)
+        if space is None:
+            return ()
+        records = await self._select(
+            "community_posts",
+            {
+                "space_id": f"eq.{space.id}",
+                "parent_post_id": "is.null",
+                "visibility": "eq.published",
+                "select": self._POST_FIELDS,
+                "order": "created_at.desc",
+                "limit": str(limit),
+            },
+        )
+        return await self._with_authors(records, slug)
+
+    async def get_thread(self, post_id: str) -> tuple[CommunityPost, ...]:
+        if not post_id:
+            return ()
+        roots = await self._select(
+            "community_posts",
+            {
+                "id": f"eq.{post_id}",
+                "parent_post_id": "is.null",
+                "visibility": "eq.published",
+                "select": self._POST_FIELDS,
+            },
+        )
+        if not roots:
+            return ()
+        replies = await self._select(
+            "community_posts",
+            {
+                "parent_post_id": f"eq.{post_id}",
+                "visibility": "eq.published",
+                "select": self._POST_FIELDS,
+                "order": "created_at.asc",
+            },
+        )
+        slug = await self._slug_for_space(str(roots[0].get("space_id")))
+        return await self._with_authors([*roots, *replies], slug)
+
+    async def create_post(
+        self,
+        tenant: TenantContext,
+        space_slug: str,
+        parent_post_id: str | None,
+        title: str | None,
+        body: str,
+        verdict: object,
+    ) -> CommunityPostRecord:
+        # Imported here so the domain guardrails stay a domain concern and the
+        # repository layer keeps no opinion about how a verdict is reached.
+        from devstacks_domain import ModerationAction, ModerationVerdict
+
+        if not isinstance(verdict, ModerationVerdict):
+            raise ValueError("a moderation verdict is required to create a post")
+
+        visibility = {
+            ModerationAction.ALLOW: "published",
+            ModerationAction.ALLOW_WITH_NOTICE: "published",
+            ModerationAction.HOLD_FOR_REVIEW: "held",
+            ModerationAction.BLOCK: "blocked",
+        }[verdict.action]
+
+        record = await self._call_rpc(
+            "create_community_post",
+            {
+                "p_profile_id": tenant.profile_id,
+                "p_space_slug": space_slug,
+                "p_parent_post_id": parent_post_id,
+                "p_title": title,
+                "p_body": body,
+                "p_intent": str(verdict.intent),
+                "p_visibility": visibility,
+                "p_action": str(verdict.action),
+                "p_severity": str(verdict.severity),
+                "p_policy_version": verdict.policy_version,
+                "p_rationale": verdict.rationale,
+                "p_signals": [
+                    {
+                        "kind": str(signal.kind),
+                        "severity": str(signal.severity),
+                        "rule_id": signal.rule_id,
+                        "explanation": signal.explanation,
+                        "excerpt": signal.excerpt,
+                    }
+                    for signal in verdict.signals
+                ],
+            },
+        )
+        post_id = record.get("post_id")
+        decision_id = record.get("decision_id")
+        if not isinstance(post_id, str) or not isinstance(decision_id, str):
+            raise RepositoryUnavailableError("Supabase community write response is incomplete")
+        return CommunityPostRecord(post_id=post_id, decision_id=decision_id)
+
+    async def _with_authors(
+        self,
+        records: list[dict[str, object]],
+        slug: str,
+    ) -> tuple[CommunityPost, ...]:
+        profile_ids = {
+            str(record.get("profile_id"))
+            for record in records
+            if isinstance(record.get("profile_id"), str)
+        }
+        authors = await self._authors(profile_ids)
+        unknown = CommunityAuthor(profile_id="", handle="unknown", display_name=None)
+        return tuple(
+            self._post(record, slug, authors.get(str(record.get("profile_id")), unknown))
+            for record in records
+        )
+
+    async def _authors(self, profile_ids: set[str]) -> dict[str, CommunityAuthor]:
+        if not profile_ids:
+            return {}
+        ids = ",".join(sorted(profile_ids))
+        profiles = await self._select(
+            "profiles",
+            {"id": f"in.({ids})", "select": "id,handle,display_name"},
+        )
+        # Standing in a space comes from published claims, not from a post count.
+        categories: dict[str, set[str]] = {}
+        claims = await self._select(
+            "claims",
+            {"profile_id": f"in.({ids})", "select": "profile_id,category"},
+        )
+        for claim in claims:
+            profile_id = claim.get("profile_id")
+            category = claim.get("category")
+            if isinstance(profile_id, str) and isinstance(category, str):
+                categories.setdefault(profile_id, set()).add(category)
+
+        authors: dict[str, CommunityAuthor] = {}
+        for record in profiles:
+            profile_id = record.get("id")
+            handle = record.get("handle")
+            if not isinstance(profile_id, str) or not isinstance(handle, str):
+                continue
+            display_name = record.get("display_name")
+            authors[profile_id] = CommunityAuthor(
+                profile_id=profile_id,
+                handle=handle,
+                display_name=display_name if isinstance(display_name, str) else None,
+                verified_categories=tuple(sorted(categories.get(profile_id, set()))),
+            )
+        return authors
+
+    async def _slug_for_space(self, space_id: str) -> str:
+        records = await self._select(
+            "community_spaces", {"id": f"eq.{space_id}", "select": "slug"}
+        )
+        slug = records[0].get("slug") if records else None
+        return slug if isinstance(slug, str) else ""
+
+    @staticmethod
+    def _space(record: dict[str, object]) -> CommunitySpace:
+        space_id = record.get("id")
+        slug = record.get("slug")
+        name = record.get("name")
+        description = record.get("description")
+        if not all(isinstance(value, str) and value for value in (space_id, slug, name, description)):
+            raise RepositoryUnavailableError("Supabase community space response is incomplete")
+        return CommunitySpace(
+            id=str(space_id),
+            slug=str(slug),
+            name=str(name),
+            description=str(description),
+            topic_categories=_string_tuple(record.get("topic_categories")),
+            allowed_intents=_string_tuple(record.get("allowed_intents")),
+        )
+
+    @staticmethod
+    def _post(record: dict[str, object], slug: str, author: CommunityAuthor) -> CommunityPost:
+        post_id = record.get("id")
+        body = record.get("body")
+        created_at = record.get("created_at")
+        if not all(isinstance(value, str) and value for value in (post_id, body, created_at)):
+            raise RepositoryUnavailableError("Supabase community post response is incomplete")
+        reply_count = record.get("reply_count")
+        title = record.get("title")
+        parent = record.get("parent_post_id")
+        return CommunityPost(
+            id=str(post_id),
+            space_slug=slug,
+            parent_post_id=parent if isinstance(parent, str) else None,
+            title=title if isinstance(title, str) else None,
+            body=str(body),
+            intent=str(record.get("intent") or "unknown"),
+            visibility=str(record.get("visibility") or "published"),
+            reply_count=reply_count if isinstance(reply_count, int) else 0,
+            created_at=str(created_at),
+            author=author,
+        )
+
+    async def _select(self, table: str, params: dict[str, str]) -> list[dict[str, object]]:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers=self._headers(),
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.get(f"/rest/v1/{table}", params=params)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase community query failed") from error
+        return self._records(response)
+
+    async def _call_rpc(self, name: str, payload: dict[str, object]) -> dict[str, object]:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers=self._headers(),
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(f"/rest/v1/rpc/{name}", json=payload)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase community write failed") from error
+        records = self._records(response)
+        if len(records) != 1:
+            raise RepositoryUnavailableError("Supabase community write response is invalid")
+        return records[0]
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "apikey": self._settings.service_role_key,
+            "Authorization": f"Bearer {self._settings.service_role_key}",
+        }
+
+    @staticmethod
+    def _records(response: httpx.Response) -> list[dict[str, object]]:
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase community query failed")
+        try:
+            records = response.json()
+        except ValueError as error:
+            raise RepositoryUnavailableError("Supabase community response is invalid") from error
+        if isinstance(records, dict):
+            records = [records]
+        if not isinstance(records, list):
+            raise RepositoryUnavailableError("Supabase community response is invalid")
+        for record in records:
+            if not isinstance(record, dict):
+                raise RepositoryUnavailableError("Supabase community response is invalid")
+        return records
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
 
 
 class SupabaseConnectorRepository:

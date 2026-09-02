@@ -7,6 +7,7 @@ const COLUMNS: { heading: string; links: { href: string; label: string; external
     heading: "Product",
     links: [
       { href: "/try", label: "Live preview" },
+      { href: "/community", label: "Community" },
       { href: "/#how-it-works", label: "How it works" },
       { href: "/#assurance", label: "Assurance model" },
       { href: "/dashboard", label: "Dashboard" },

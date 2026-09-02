@@ -19,6 +19,7 @@ import {
   SearchIcon,
   SignOutIcon,
   UserIcon,
+  UsersIcon,
   XIcon,
 } from "./ui/Icon";
 import { Menu, MenuDivider, MenuGroupLabel } from "./ui/Menu";
@@ -37,8 +38,11 @@ const APP_NAV = [
   { href: "/dashboard/settings", label: "Settings", icon: <GearIcon size={15} /> },
 ];
 
+const COMMUNITY_LINK = { href: "/community", label: "Community", icon: <UsersIcon size={15} /> };
+
 const MARKETING_NAV = [
   { href: "/#how-it-works", label: "How it works", icon: null },
+  { href: "/community", label: "Community", icon: null },
   { href: "/#assurance", label: "Assurance", icon: null },
   { href: "/try", label: "Live preview", icon: null },
 ];
@@ -56,7 +60,7 @@ export function SiteHeader({ user, variant = "app" }: { user?: HeaderUser | null
     setMobileOpen(false);
   }, [pathname]);
 
-  const nav = variant === "app" ? APP_NAV : MARKETING_NAV;
+  const nav = variant === "app" ? [...APP_NAV, COMMUNITY_LINK] : MARKETING_NAV;
 
   return (
     <>

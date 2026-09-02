@@ -15,15 +15,19 @@ export function Label({
   size,
   children,
   className,
+  title,
 }: {
   tone?: LabelTone;
   mono?: boolean;
   size?: "lg";
   children: ReactNode;
   className?: string;
+  /** Native tooltip, for a label whose full meaning does not fit. */
+  title?: string;
 }) {
   return (
     <span
+      title={title}
       className={[
         "label",
         tone !== "neutral" ? `label--${tone}` : "",

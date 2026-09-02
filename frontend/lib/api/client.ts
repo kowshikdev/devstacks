@@ -105,6 +105,101 @@ export function getPublicProfile(handle: string): Promise<PublishedProfile> {
   return request<PublishedProfile>(`/v1/public/profiles/${encodeURIComponent(handle)}`, {}, false);
 }
 
+export type ModerationActionKind =
+  | "allow"
+  | "allow_with_notice"
+  | "hold_for_review"
+  | "block";
+
+export type GuardrailSeverity = "none" | "low" | "medium" | "high" | "critical";
+
+export interface GuardrailSignal {
+  kind: string;
+  severity: GuardrailSeverity;
+  rule_id: string;
+  explanation: string;
+  excerpt: string | null;
+}
+
+export interface GuardrailVerdict {
+  action: ModerationActionKind;
+  severity: GuardrailSeverity;
+  intent: string;
+  rationale: string;
+  policy_version: string;
+  signals: GuardrailSignal[];
+}
+
+export interface CommunitySpace {
+  slug: string;
+  name: string;
+  description: string;
+  topic_categories: string[];
+  allowed_intents: string[];
+}
+
+export interface CommunityAuthor {
+  handle: string;
+  display_name: string | null;
+  verified_categories: string[];
+}
+
+export interface CommunityPost {
+  id: string;
+  space_slug: string;
+  parent_post_id: string | null;
+  title: string | null;
+  body: string;
+  intent: string;
+  reply_count: number;
+  created_at: string;
+  author: CommunityAuthor;
+}
+
+export async function listCommunitySpaces(): Promise<CommunitySpace[]> {
+  const result = await request<{ spaces: CommunitySpace[] }>("/v1/community/spaces", {}, false);
+  return result.spaces;
+}
+
+export function getCommunitySpace(
+  slug: string
+): Promise<{ space: CommunitySpace; threads: CommunityPost[] }> {
+  return request(`/v1/community/spaces/${encodeURIComponent(slug)}`, {}, false);
+}
+
+export function getCommunityThread(
+  postId: string
+): Promise<{ thread: CommunityPost; replies: CommunityPost[] }> {
+  return request(`/v1/community/posts/${encodeURIComponent(postId)}`, {}, false);
+}
+
+/** Judge a draft without storing it, so the composer can warn before submit. */
+export function preflightPost(body: string): Promise<GuardrailVerdict> {
+  return request<GuardrailVerdict>("/v1/community/preflight", {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
+}
+
+export function createCommunityPost(
+  slug: string,
+  input: { body: string; title?: string; parentPostId?: string }
+): Promise<{
+  post_id: string;
+  decision_id: string;
+  published: boolean;
+  verdict: GuardrailVerdict;
+}> {
+  return request(`/v1/community/spaces/${encodeURIComponent(slug)}/posts`, {
+    method: "POST",
+    body: JSON.stringify({
+      body: input.body,
+      title: input.title ?? null,
+      parent_post_id: input.parentPostId ?? null,
+    }),
+  });
+}
+
 export interface PublishedEvidence {
   evidence_version_id: string;
   relation: "supports" | "contradicts" | "context";
