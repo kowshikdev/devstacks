@@ -62,11 +62,79 @@ class PublishedClaim:
 
 
 @dataclass(frozen=True)
+class PublishedEvidence:
+    """One evidence version behind a published claim, safe for public display.
+
+    Carries no observed payload and no source reference: the content hash is
+    what proves the observation is fixed, without disclosing what it points at.
+    """
+
+    evidence_version_id: str
+    relation: str
+    source_type: str
+    content_hash: str
+    version_number: int
+    connector_version: str
+    assurance_class: str
+    validity: str
+    observed_at: str | None
+
+
+@dataclass(frozen=True)
+class PublishedClaimTrail:
+    handle: str
+    display_name: str | None
+    claim_revision_id: str
+    category: str
+    statement: str
+    verification_status: str
+    verifier_score: float | None
+    verified_at: str
+    freshness_status: str | None
+    published_at: str | None
+    evidence: tuple[PublishedEvidence, ...]
+
+
+@dataclass(frozen=True)
 class PublishedProfile:
     id: str
     handle: str
     display_name: str | None
     claims: tuple[PublishedClaim, ...]
+
+
+@dataclass(frozen=True)
+class ConnectorRun:
+    """The most recent ingestion run observed for a connection."""
+
+    id: str
+    status: str
+    trigger_type: str
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+    error_summary: str | None
+
+
+@dataclass(frozen=True)
+class ConnectorSummary:
+    """A caller-owned source connection, with no credential material."""
+
+    id: str
+    platform: str
+    external_subject: str | None
+    connection_status: str
+    connected_at: str | None
+    last_synced_at: str | None
+    latest_run: ConnectorRun | None
+
+
+class ConnectorRepository(Protocol):
+    async def list_own_connectors(self, tenant: TenantContext) -> tuple[ConnectorSummary, ...]:
+        """Return every source connection belonging to exactly one tenant."""
+
+    async def get_own_run(self, tenant: TenantContext, run_id: str) -> ConnectorRun | None:
+        """Return one ingestion run, only when the caller's tenant owns it."""
 
 
 class ProfileRepository(Protocol):
@@ -82,9 +150,82 @@ class ProfileRepository(Protocol):
         """Create the one profile row for an authenticated subject that has none yet."""
 
 
+@dataclass(frozen=True)
+class CommunitySpace:
+    id: str
+    slug: str
+    name: str
+    description: str
+    topic_categories: tuple[str, ...]
+    allowed_intents: tuple[str, ...]
+    thread_count: int = 0
+
+
+@dataclass(frozen=True)
+class CommunityAuthor:
+    profile_id: str
+    handle: str
+    display_name: str | None
+    #: Published claim categories this author holds, used to show topic-matched
+    #: standing instead of a participation score.
+    verified_categories: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CommunityPost:
+    id: str
+    space_slug: str
+    parent_post_id: str | None
+    title: str | None
+    body: str
+    intent: str
+    visibility: str
+    reply_count: int
+    created_at: str
+    author: CommunityAuthor
+
+
+@dataclass(frozen=True)
+class CommunityPostRecord:
+    post_id: str
+    decision_id: str
+
+
+class CommunityRepository(Protocol):
+    async def list_spaces(self) -> tuple[CommunitySpace, ...]:
+        """Return every space open for posting."""
+
+    async def get_space(self, slug: str) -> CommunitySpace | None:
+        """Return one space by its stable slug."""
+
+    async def list_threads(self, slug: str, limit: int) -> tuple[CommunityPost, ...]:
+        """Return published threads in a space, newest first."""
+
+    async def get_thread(self, post_id: str) -> tuple[CommunityPost, ...]:
+        """Return a published thread followed by its published replies."""
+
+    async def create_post(
+        self,
+        tenant: TenantContext,
+        space_slug: str,
+        parent_post_id: str | None,
+        title: str | None,
+        body: str,
+        verdict: object,
+    ) -> CommunityPostRecord:
+        """Persist a post together with the verdict that admitted it."""
+
+
 class PublicProfileRepository(Protocol):
     async def get_published_profile(self, handle: str) -> PublishedProfile | None:
         """Return a public projection containing published claims only."""
+
+    async def get_published_claim_trail(
+        self,
+        handle: str,
+        claim_revision_id: str,
+    ) -> PublishedClaimTrail | None:
+        """Return the evidence trail behind one published claim."""
 
 
 @dataclass(frozen=True)
@@ -282,6 +423,439 @@ class SupabaseProfileRepository:
         )
 
 
+class SupabaseCommunityRepository:
+    """Server-only reader and writer for community spaces and posts."""
+
+    _SPACE_FIELDS = "id,slug,name,description,topic_categories,allowed_intents"
+    _POST_FIELDS = (
+        "id,space_id,parent_post_id,title,body,intent,visibility,reply_count,created_at,profile_id"
+    )
+
+    def __init__(
+        self,
+        settings: SupabaseServiceSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def list_spaces(self) -> tuple[CommunitySpace, ...]:
+        records = await self._select(
+            "community_spaces",
+            {"is_archived": "eq.false", "select": self._SPACE_FIELDS, "order": "slug.asc"},
+        )
+        return tuple(self._space(record) for record in records)
+
+    async def get_space(self, slug: str) -> CommunitySpace | None:
+        if not slug:
+            return None
+        records = await self._select(
+            "community_spaces",
+            {"slug": f"eq.{slug}", "is_archived": "eq.false", "select": self._SPACE_FIELDS},
+        )
+        return self._space(records[0]) if records else None
+
+    async def list_threads(self, slug: str, limit: int = 50) -> tuple[CommunityPost, ...]:
+        space = await self.get_space(slug)
+        if space is None:
+            return ()
+        records = await self._select(
+            "community_posts",
+            {
+                "space_id": f"eq.{space.id}",
+                "parent_post_id": "is.null",
+                "visibility": "eq.published",
+                "select": self._POST_FIELDS,
+                "order": "created_at.desc",
+                "limit": str(limit),
+            },
+        )
+        return await self._with_authors(records, slug)
+
+    async def get_thread(self, post_id: str) -> tuple[CommunityPost, ...]:
+        if not post_id:
+            return ()
+        roots = await self._select(
+            "community_posts",
+            {
+                "id": f"eq.{post_id}",
+                "parent_post_id": "is.null",
+                "visibility": "eq.published",
+                "select": self._POST_FIELDS,
+            },
+        )
+        if not roots:
+            return ()
+        replies = await self._select(
+            "community_posts",
+            {
+                "parent_post_id": f"eq.{post_id}",
+                "visibility": "eq.published",
+                "select": self._POST_FIELDS,
+                "order": "created_at.asc",
+            },
+        )
+        slug = await self._slug_for_space(str(roots[0].get("space_id")))
+        return await self._with_authors([*roots, *replies], slug)
+
+    async def create_post(
+        self,
+        tenant: TenantContext,
+        space_slug: str,
+        parent_post_id: str | None,
+        title: str | None,
+        body: str,
+        verdict: object,
+    ) -> CommunityPostRecord:
+        # Imported here so the domain guardrails stay a domain concern and the
+        # repository layer keeps no opinion about how a verdict is reached.
+        from devstacks_domain import ModerationAction, ModerationVerdict
+
+        if not isinstance(verdict, ModerationVerdict):
+            raise ValueError("a moderation verdict is required to create a post")
+
+        visibility = {
+            ModerationAction.ALLOW: "published",
+            ModerationAction.ALLOW_WITH_NOTICE: "published",
+            ModerationAction.HOLD_FOR_REVIEW: "held",
+            ModerationAction.BLOCK: "blocked",
+        }[verdict.action]
+
+        record = await self._call_rpc(
+            "create_community_post",
+            {
+                "p_profile_id": tenant.profile_id,
+                "p_space_slug": space_slug,
+                "p_parent_post_id": parent_post_id,
+                "p_title": title,
+                "p_body": body,
+                "p_intent": str(verdict.intent),
+                "p_visibility": visibility,
+                "p_action": str(verdict.action),
+                "p_severity": str(verdict.severity),
+                "p_policy_version": verdict.policy_version,
+                "p_rationale": verdict.rationale,
+                "p_signals": [
+                    {
+                        "kind": str(signal.kind),
+                        "severity": str(signal.severity),
+                        "rule_id": signal.rule_id,
+                        "explanation": signal.explanation,
+                        "excerpt": signal.excerpt,
+                    }
+                    for signal in verdict.signals
+                ],
+            },
+        )
+        post_id = record.get("post_id")
+        decision_id = record.get("decision_id")
+        if not isinstance(post_id, str) or not isinstance(decision_id, str):
+            raise RepositoryUnavailableError("Supabase community write response is incomplete")
+        return CommunityPostRecord(post_id=post_id, decision_id=decision_id)
+
+    async def _with_authors(
+        self,
+        records: list[dict[str, object]],
+        slug: str,
+    ) -> tuple[CommunityPost, ...]:
+        profile_ids = {
+            str(record.get("profile_id"))
+            for record in records
+            if isinstance(record.get("profile_id"), str)
+        }
+        authors = await self._authors(profile_ids)
+        unknown = CommunityAuthor(profile_id="", handle="unknown", display_name=None)
+        return tuple(
+            self._post(record, slug, authors.get(str(record.get("profile_id")), unknown))
+            for record in records
+        )
+
+    async def _authors(self, profile_ids: set[str]) -> dict[str, CommunityAuthor]:
+        if not profile_ids:
+            return {}
+        ids = ",".join(sorted(profile_ids))
+        profiles = await self._select(
+            "profiles",
+            {"id": f"in.({ids})", "select": "id,handle,display_name"},
+        )
+        # Standing in a space comes from published claims, not from a post count.
+        categories: dict[str, set[str]] = {}
+        claims = await self._select(
+            "claims",
+            {"profile_id": f"in.({ids})", "select": "profile_id,category"},
+        )
+        for claim in claims:
+            profile_id = claim.get("profile_id")
+            category = claim.get("category")
+            if isinstance(profile_id, str) and isinstance(category, str):
+                categories.setdefault(profile_id, set()).add(category)
+
+        authors: dict[str, CommunityAuthor] = {}
+        for record in profiles:
+            profile_id = record.get("id")
+            handle = record.get("handle")
+            if not isinstance(profile_id, str) or not isinstance(handle, str):
+                continue
+            display_name = record.get("display_name")
+            authors[profile_id] = CommunityAuthor(
+                profile_id=profile_id,
+                handle=handle,
+                display_name=display_name if isinstance(display_name, str) else None,
+                verified_categories=tuple(sorted(categories.get(profile_id, set()))),
+            )
+        return authors
+
+    async def _slug_for_space(self, space_id: str) -> str:
+        records = await self._select(
+            "community_spaces", {"id": f"eq.{space_id}", "select": "slug"}
+        )
+        slug = records[0].get("slug") if records else None
+        return slug if isinstance(slug, str) else ""
+
+    @staticmethod
+    def _space(record: dict[str, object]) -> CommunitySpace:
+        space_id = record.get("id")
+        slug = record.get("slug")
+        name = record.get("name")
+        description = record.get("description")
+        if not all(isinstance(value, str) and value for value in (space_id, slug, name, description)):
+            raise RepositoryUnavailableError("Supabase community space response is incomplete")
+        return CommunitySpace(
+            id=str(space_id),
+            slug=str(slug),
+            name=str(name),
+            description=str(description),
+            topic_categories=_string_tuple(record.get("topic_categories")),
+            allowed_intents=_string_tuple(record.get("allowed_intents")),
+        )
+
+    @staticmethod
+    def _post(record: dict[str, object], slug: str, author: CommunityAuthor) -> CommunityPost:
+        post_id = record.get("id")
+        body = record.get("body")
+        created_at = record.get("created_at")
+        if not all(isinstance(value, str) and value for value in (post_id, body, created_at)):
+            raise RepositoryUnavailableError("Supabase community post response is incomplete")
+        reply_count = record.get("reply_count")
+        title = record.get("title")
+        parent = record.get("parent_post_id")
+        return CommunityPost(
+            id=str(post_id),
+            space_slug=slug,
+            parent_post_id=parent if isinstance(parent, str) else None,
+            title=title if isinstance(title, str) else None,
+            body=str(body),
+            intent=str(record.get("intent") or "unknown"),
+            visibility=str(record.get("visibility") or "published"),
+            reply_count=reply_count if isinstance(reply_count, int) else 0,
+            created_at=str(created_at),
+            author=author,
+        )
+
+    async def _select(self, table: str, params: dict[str, str]) -> list[dict[str, object]]:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers=self._headers(),
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.get(f"/rest/v1/{table}", params=params)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase community query failed") from error
+        return self._records(response)
+
+    async def _call_rpc(self, name: str, payload: dict[str, object]) -> dict[str, object]:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers=self._headers(),
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(f"/rest/v1/rpc/{name}", json=payload)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase community write failed") from error
+        records = self._records(response)
+        if len(records) != 1:
+            raise RepositoryUnavailableError("Supabase community write response is invalid")
+        return records[0]
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "apikey": self._settings.service_role_key,
+            "Authorization": f"Bearer {self._settings.service_role_key}",
+        }
+
+    @staticmethod
+    def _records(response: httpx.Response) -> list[dict[str, object]]:
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase community query failed")
+        try:
+            records = response.json()
+        except ValueError as error:
+            raise RepositoryUnavailableError("Supabase community response is invalid") from error
+        if isinstance(records, dict):
+            records = [records]
+        if not isinstance(records, list):
+            raise RepositoryUnavailableError("Supabase community response is invalid")
+        for record in records:
+            if not isinstance(record, dict):
+                raise RepositoryUnavailableError("Supabase community response is invalid")
+        return records
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
+
+
+class SupabaseConnectorRepository:
+    """Server-only repository for connector state, scoped by a validated tenant.
+
+    Connector rows carry no credential material — encrypted tokens live in a
+    separate table that this repository never selects from — so the projection
+    returned here is safe to hand to the browser.
+    """
+
+    _CONNECTION_FIELDS = (
+        "id,platform,external_subject,connection_status,connected_at,last_synced_at"
+    )
+    _RUN_FIELDS = (
+        "id,connection_id,status,trigger_type,created_at,started_at,completed_at,error_summary"
+    )
+    # Bounds the run query: enough history to find the newest run per connection
+    # without letting a busy profile return an unbounded page.
+    _RUN_LIMIT = "50"
+
+    def __init__(
+        self,
+        settings: SupabaseServiceSettings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+
+    async def list_own_connectors(self, tenant: TenantContext) -> tuple[ConnectorSummary, ...]:
+        connections = await self._select(
+            "source_connections",
+            {
+                "profile_id": f"eq.{tenant.profile_id}",
+                "select": self._CONNECTION_FIELDS,
+                "order": "created_at.desc",
+            },
+        )
+        if not connections:
+            return ()
+
+        runs = await self._select(
+            "ingestion_runs",
+            {
+                "profile_id": f"eq.{tenant.profile_id}",
+                "select": self._RUN_FIELDS,
+                "order": "created_at.desc",
+                "limit": self._RUN_LIMIT,
+            },
+        )
+
+        # Runs arrive newest first, so the first row seen for a connection is
+        # its latest run and later rows for the same connection are history.
+        latest_by_connection: dict[str, ConnectorRun] = {}
+        for record in runs:
+            connection_id = record.get("connection_id")
+            if not isinstance(connection_id, str) or connection_id in latest_by_connection:
+                continue
+            latest_by_connection[connection_id] = self._run(record)
+
+        summaries: list[ConnectorSummary] = []
+        for record in connections:
+            connection_id = record.get("id")
+            platform = record.get("platform")
+            connection_status = record.get("connection_status")
+            if not isinstance(connection_id, str) or not isinstance(platform, str):
+                raise RepositoryUnavailableError("Supabase connector response is incomplete")
+            if not isinstance(connection_status, str):
+                raise RepositoryUnavailableError("Supabase connector response is incomplete")
+            summaries.append(
+                ConnectorSummary(
+                    id=connection_id,
+                    platform=platform,
+                    external_subject=self._text(record.get("external_subject")),
+                    connection_status=connection_status,
+                    connected_at=self._text(record.get("connected_at")),
+                    last_synced_at=self._text(record.get("last_synced_at")),
+                    latest_run=latest_by_connection.get(connection_id),
+                )
+            )
+        return tuple(summaries)
+
+    async def get_own_run(self, tenant: TenantContext, run_id: str) -> ConnectorRun | None:
+        records = await self._select(
+            "ingestion_runs",
+            {
+                "id": f"eq.{run_id}",
+                # The tenant filter is applied in the query rather than after it,
+                # so another tenant's run is never fetched in the first place.
+                "profile_id": f"eq.{tenant.profile_id}",
+                "select": self._RUN_FIELDS,
+            },
+        )
+        if not records:
+            return None
+        return self._run(records[0])
+
+    async def _select(self, table: str, params: dict[str, str]) -> list[dict[str, object]]:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.get(f"/rest/v1/{table}", params=params)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase connector query failed") from error
+
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase connector query failed")
+
+        records = response.json()
+        if not isinstance(records, list):
+            raise RepositoryUnavailableError("Supabase connector response is invalid")
+        for record in records:
+            if not isinstance(record, dict):
+                raise RepositoryUnavailableError("Supabase connector response is invalid")
+        return records
+
+    @classmethod
+    def _run(cls, record: dict[str, object]) -> ConnectorRun:
+        run_id = cls._required(record, "id")
+        return ConnectorRun(
+            id=run_id,
+            status=cls._required(record, "status"),
+            trigger_type=cls._required(record, "trigger_type"),
+            created_at=cls._required(record, "created_at"),
+            started_at=cls._text(record.get("started_at")),
+            completed_at=cls._text(record.get("completed_at")),
+            error_summary=cls._text(record.get("error_summary")),
+        )
+
+    @staticmethod
+    def _required(record: dict[str, object], field: str) -> str:
+        value = record.get(field)
+        if not isinstance(value, str) or not value:
+            raise RepositoryUnavailableError("Supabase ingestion run response is incomplete")
+        return value
+
+    @staticmethod
+    def _text(value: object) -> str | None:
+        return value if isinstance(value, str) else None
+
+
 class SupabasePublicProfileRepository:
     """Server-only reader for the narrowly scoped public profile projection."""
 
@@ -363,6 +937,145 @@ class SupabasePublicProfileRepository:
             freshness_status=freshness_status,
             last_verified_at=last_verified_at,
         )
+
+    async def get_published_claim_trail(
+        self,
+        handle: str,
+        claim_revision_id: str,
+    ) -> PublishedClaimTrail | None:
+        if not handle or not claim_revision_id:
+            return None
+        records = await self._call_projection(
+            "get_published_claim_evidence",
+            {"p_handle": handle, "p_claim_revision_id": claim_revision_id},
+        )
+        if not records:
+            return None
+
+        first = records[0]
+        if first.get("handle") != handle or first.get("claim_revision_id") != claim_revision_id:
+            raise RepositoryUnavailableError("Supabase public claim response violates scope")
+
+        category = first.get("category")
+        statement = first.get("statement")
+        verification_status = first.get("verification_status")
+        verified_at = first.get("verified_at")
+        if not all(
+            isinstance(value, str) and value
+            for value in (category, statement, verification_status, verified_at)
+        ):
+            raise RepositoryUnavailableError("Supabase public claim response is incomplete")
+
+        display_name = first.get("display_name")
+        # A claim with no linked evidence still projects one row, with the
+        # evidence columns null; that is an empty trail, not a broken response.
+        evidence = tuple(
+            parsed
+            for parsed in (self._parse_published_evidence(record) for record in records)
+            if parsed is not None
+        )
+        return PublishedClaimTrail(
+            handle=handle,
+            display_name=display_name if isinstance(display_name, str) else None,
+            claim_revision_id=claim_revision_id,
+            category=str(category),
+            statement=str(statement),
+            verification_status=str(verification_status),
+            verifier_score=self._score(first.get("verifier_score")),
+            verified_at=str(verified_at),
+            freshness_status=self._optional_text(first.get("freshness_status")),
+            published_at=self._optional_text(first.get("published_at")),
+            evidence=evidence,
+        )
+
+    async def _call_projection(
+        self,
+        name: str,
+        payload: dict[str, str],
+    ) -> list[dict[str, object]]:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._settings.url,
+                headers={
+                    "apikey": self._settings.service_role_key,
+                    "Authorization": f"Bearer {self._settings.service_role_key}",
+                },
+                timeout=5.0,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(f"/rest/v1/rpc/{name}", json=payload)
+        except httpx.HTTPError as error:
+            raise RepositoryUnavailableError("Supabase public claim query failed") from error
+        if response.is_error:
+            raise RepositoryUnavailableError("Supabase public claim query failed")
+        try:
+            records = response.json()
+        except ValueError as error:
+            raise RepositoryUnavailableError("Supabase public claim response is invalid") from error
+        if not isinstance(records, list):
+            raise RepositoryUnavailableError("Supabase public claim response is invalid")
+        for record in records:
+            if not isinstance(record, dict):
+                raise RepositoryUnavailableError("Supabase public claim response is invalid")
+        return records
+
+    @classmethod
+    def _parse_published_evidence(cls, record: dict[str, object]) -> PublishedEvidence | None:
+        evidence_version_id = record.get("evidence_version_id")
+        if evidence_version_id is None:
+            return None
+
+        relation = record.get("relation")
+        source_type = record.get("source_type")
+        content_hash = record.get("content_hash")
+        connector_version = record.get("connector_version")
+        assurance_class = record.get("assurance_class")
+        validity = record.get("validity")
+        version_number = record.get("version_number")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                evidence_version_id,
+                relation,
+                source_type,
+                content_hash,
+                connector_version,
+                assurance_class,
+                validity,
+            )
+        ):
+            raise RepositoryUnavailableError("Supabase public claim evidence is incomplete")
+        if not isinstance(version_number, int):
+            raise RepositoryUnavailableError("Supabase public claim evidence is incomplete")
+
+        return PublishedEvidence(
+            evidence_version_id=str(evidence_version_id),
+            relation=str(relation),
+            source_type=str(source_type),
+            content_hash=str(content_hash),
+            version_number=version_number,
+            connector_version=str(connector_version),
+            assurance_class=str(assurance_class),
+            validity=str(validity),
+            observed_at=cls._optional_text(record.get("observed_at")),
+        )
+
+    @staticmethod
+    def _optional_text(value: object) -> str | None:
+        return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _score(value: object) -> float | None:
+        # PostgREST renders numeric as a JSON string often enough that a plain
+        # isinstance check would silently drop a real score.
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
 
 
 class SupabaseAuditRepository:

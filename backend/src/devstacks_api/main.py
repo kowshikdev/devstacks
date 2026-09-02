@@ -31,11 +31,19 @@ from .github_webhook_service import (
 from .github_webhooks import GitHubWebhookError, GitHubWebhookSettings, GitHubWebhookUnavailableError
 from .rate_limit import InMemoryRateLimiter
 from .repositories import (
+    CommunityPost,
+    CommunityRepository,
+    CommunitySpace,
+    ConnectorRepository,
+    ConnectorRun,
+    ConnectorSummary,
     ProfileRepository,
     PublicProfileRepository,
     RepositoryUnavailableError,
     SupabaseAgentRunRepository,
     SupabaseClaimRepository,
+    SupabaseCommunityRepository,
+    SupabaseConnectorRepository,
     SupabaseGitHubAuthorizationRepository,
     SupabaseGitHubWebhookRepository,
     SupabaseIngestionJobRepository,
@@ -49,6 +57,7 @@ from .repositories import (
 
 from devstacks_domain import (
     EvidenceValidity,
+    ModerationVerdict,
     FernetTokenCipher,
     ProvenanceError,
     PublicationContext,
@@ -59,6 +68,7 @@ from devstacks_domain import (
     TenantContext,
     TokenCipherError,
     TransitionError,
+    evaluate as evaluate_post,
     VerificationStatus,
 )
 
@@ -129,6 +139,23 @@ def get_ingestion_job_repository(request: Request) -> SupabaseIngestionJobReposi
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Ingestion service is unavailable",
+        ) from error
+
+
+def get_connector_repository(request: Request) -> ConnectorRepository:
+    repository: ConnectorRepository | None = getattr(
+        request.app.state,
+        "connector_repository",
+        None,
+    )
+    if repository is not None:
+        return repository
+    try:
+        return SupabaseConnectorRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Connector service is unavailable",
         ) from error
 
 
@@ -330,27 +357,30 @@ async def create_profile(
     }
 
 
+def _public_profile_repository(request: Request) -> PublicProfileRepository:
+    repository: PublicProfileRepository | None = getattr(
+        request.app.state,
+        "public_profile_repository",
+        None,
+    )
+    if repository is not None:
+        return repository
+    try:
+        return SupabasePublicProfileRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Public profile service is unavailable",
+        ) from error
+
+
 @app.get("/v1/public/profiles/{handle}", tags=["public-profiles"])
 async def published_profile(
     handle: str,
     request: Request,
 ) -> dict[str, str | None | list[dict[str, str | None]]]:
     """Return a read-only projection of published claims for a public profile."""
-    repository: PublicProfileRepository | None = getattr(
-        request.app.state,
-        "public_profile_repository",
-        None,
-    )
-    if repository is None:
-        try:
-            repository = SupabasePublicProfileRepository(
-                SupabaseServiceSettings.from_environment()
-            )
-        except RepositoryUnavailableError as error:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Public profile service is unavailable",
-            ) from error
+    repository = _public_profile_repository(request)
     try:
         profile = await repository.get_published_profile(handle)
     except RepositoryUnavailableError as error:
@@ -378,6 +408,285 @@ async def published_profile(
             }
             for claim in profile.claims
         ],
+    }
+
+
+@app.get("/v1/public/profiles/{handle}/claims/{claim_revision_id}", tags=["public-profiles"])
+async def published_claim_evidence(
+    handle: str,
+    claim_revision_id: str,
+    request: Request,
+) -> dict[str, object]:
+    """Return the evidence trail behind one published claim.
+
+    This is the reader-facing half of the product's central promise: a claim is
+    only worth what backs it, so the chain is public. Observed payloads and
+    source references stay private — a content hash proves the observation is
+    fixed without disclosing what it points at.
+    """
+    repository = _public_profile_repository(request)
+    try:
+        trail = await repository.get_published_claim_trail(handle, claim_revision_id)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Public profile service is unavailable",
+        ) from error
+    if trail is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Published claim not found",
+        )
+    return {
+        "handle": trail.handle,
+        "display_name": trail.display_name,
+        "claim_revision_id": trail.claim_revision_id,
+        "category": trail.category,
+        "statement": trail.statement,
+        "verification_status": trail.verification_status,
+        "verifier_score": trail.verifier_score,
+        "verified_at": trail.verified_at,
+        "freshness_status": trail.freshness_status,
+        "published_at": trail.published_at,
+        "evidence": [
+            {
+                "evidence_version_id": item.evidence_version_id,
+                "relation": item.relation,
+                "source_type": item.source_type,
+                "content_hash": item.content_hash,
+                "version_number": item.version_number,
+                "connector_version": item.connector_version,
+                "assurance_class": item.assurance_class,
+                "validity": item.validity,
+                "observed_at": item.observed_at,
+            }
+            for item in trail.evidence
+        ],
+    }
+
+
+def get_community_repository(request: Request) -> CommunityRepository:
+    repository: CommunityRepository | None = getattr(
+        request.app.state,
+        "community_repository",
+        None,
+    )
+    if repository is not None:
+        return repository
+    try:
+        return SupabaseCommunityRepository(SupabaseServiceSettings.from_environment())
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+
+
+def _space_projection(space: CommunitySpace) -> dict[str, object]:
+    return {
+        "slug": space.slug,
+        "name": space.name,
+        "description": space.description,
+        "topic_categories": list(space.topic_categories),
+        "allowed_intents": list(space.allowed_intents),
+    }
+
+
+def _post_projection(post: CommunityPost) -> dict[str, object]:
+    return {
+        "id": post.id,
+        "space_slug": post.space_slug,
+        "parent_post_id": post.parent_post_id,
+        "title": post.title,
+        "body": post.body,
+        "intent": post.intent,
+        "reply_count": post.reply_count,
+        "created_at": post.created_at,
+        "author": {
+            "handle": post.author.handle,
+            "display_name": post.author.display_name,
+            "verified_categories": list(post.author.verified_categories),
+        },
+    }
+
+
+def _verdict_projection(verdict: ModerationVerdict) -> dict[str, object]:
+    return {
+        "action": str(verdict.action),
+        "severity": str(verdict.severity),
+        "intent": str(verdict.intent),
+        "rationale": verdict.rationale,
+        "policy_version": verdict.policy_version,
+        "signals": [
+            {
+                "kind": str(signal.kind),
+                "severity": str(signal.severity),
+                "rule_id": signal.rule_id,
+                "explanation": signal.explanation,
+                "excerpt": signal.excerpt,
+            }
+            for signal in verdict.signals
+        ],
+    }
+
+
+@app.get("/v1/community/spaces", tags=["community"])
+async def list_community_spaces(request: Request) -> dict[str, object]:
+    """List the spaces open for posting. Public: reading needs no account."""
+    repository = get_community_repository(request)
+    try:
+        spaces = await repository.list_spaces()
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+    return {"spaces": [_space_projection(space) for space in spaces]}
+
+
+@app.get("/v1/community/spaces/{slug}", tags=["community"])
+async def get_community_space(slug: str, request: Request) -> dict[str, object]:
+    """Return one space and its published threads."""
+    repository = get_community_repository(request)
+    try:
+        space = await repository.get_space(slug)
+        if space is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Space not found")
+        threads = await repository.list_threads(slug, 50)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+    return {
+        "space": _space_projection(space),
+        "threads": [_post_projection(post) for post in threads],
+    }
+
+
+@app.get("/v1/community/posts/{post_id}", tags=["community"])
+async def get_community_thread(post_id: str, request: Request) -> dict[str, object]:
+    """Return a published thread and its published replies."""
+    repository = get_community_repository(request)
+    try:
+        posts = await repository.get_thread(post_id)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+    if not posts:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return {
+        "thread": _post_projection(posts[0]),
+        "replies": [_post_projection(post) for post in posts[1:]],
+    }
+
+
+class GuardrailPreflightBody(BaseModel):
+    body: str
+
+
+@app.post("/v1/community/preflight", tags=["community"])
+async def preflight_community_post(
+    payload: GuardrailPreflightBody,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, object]:
+    """Judge a draft without storing it, so the composer can warn before submit.
+
+    Telling someone why a post will be stopped, before they send it, is the
+    difference between a guardrail and a trapdoor. Nothing here is persisted.
+    """
+    try:
+        verdict = evaluate_post(payload.body)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+    return _verdict_projection(verdict)
+
+
+class CreatePostBody(BaseModel):
+    body: str
+    title: str | None = None
+    parent_post_id: str | None = None
+
+
+@app.post("/v1/community/spaces/{slug}/posts", tags=["community"])
+async def create_community_post(
+    slug: str,
+    payload: CreatePostBody,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, object]:
+    """Create a thread or a reply, subject to the guardrails.
+
+    The verdict is recorded with the post whatever it says, so a held or blocked
+    post keeps the reason it was actioned and the author can see it.
+    """
+    is_reply = payload.parent_post_id is not None
+    title = None if is_reply else (payload.title or "").strip()
+    if not is_reply and not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A thread needs a title",
+        )
+
+    try:
+        # The title is judged alongside the body: hostility in a headline is
+        # still hostility, and it is the part everyone reads.
+        verdict = evaluate_post(f"{title}\n\n{payload.body}" if title else payload.body)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    repository = get_community_repository(request)
+    try:
+        space = await repository.get_space(slug)
+        if space is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Space not found")
+
+        # A space may accept only certain kinds of post. Recruitment in a help
+        # space is not a moral failing, it is just the wrong room.
+        #
+        # This is routing, not moderation, so it only applies to a post that
+        # would otherwise be published. Anything the guardrails already caught
+        # follows the moderation path instead, where the author is told what
+        # actually happened rather than that the room was wrong.
+        if (
+            space.allowed_intents
+            and verdict.publishable
+            and str(verdict.intent) not in space.allowed_intents
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"This reads as a {str(verdict.intent).replace('_', ' ')}, which "
+                    f"{space.name} does not accept."
+                ),
+            )
+
+        record = await repository.create_post(
+            tenant,
+            slug,
+            payload.parent_post_id,
+            title or None,
+            payload.body,
+            verdict,
+        )
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Community service is unavailable",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    return {
+        "post_id": record.post_id,
+        "decision_id": record.decision_id,
+        "published": verdict.publishable,
+        "verdict": _verdict_projection(verdict),
     }
 
 
@@ -413,21 +722,7 @@ def _render_badge_svg(label: str, value: str, value_color: str) -> str:
 @app.get("/v1/public/profiles/{handle}/badge.svg", tags=["public-profiles"])
 async def public_profile_badge(handle: str, request: Request) -> Response:
     """Render an embeddable README badge showing verified claim count for a public profile."""
-    repository: PublicProfileRepository | None = getattr(
-        request.app.state,
-        "public_profile_repository",
-        None,
-    )
-    if repository is None:
-        try:
-            repository = SupabasePublicProfileRepository(
-                SupabaseServiceSettings.from_environment()
-            )
-        except RepositoryUnavailableError as error:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Public profile service is unavailable",
-            ) from error
+    repository = _public_profile_repository(request)
     try:
         profile = await repository.get_published_profile(handle)
     except RepositoryUnavailableError as error:
@@ -594,6 +889,76 @@ async def queue_github_sync(
             detail="Ingestion service is unavailable",
         ) from error
     return {"run_id": run_id}
+
+
+def _run_projection(run: ConnectorRun) -> dict[str, object]:
+    return {
+        "id": run.id,
+        "status": run.status,
+        "trigger_type": run.trigger_type,
+        "created_at": run.created_at,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "error_summary": run.error_summary,
+    }
+
+
+def _connector_projection(connector: ConnectorSummary) -> dict[str, object]:
+    return {
+        "id": connector.id,
+        "platform": connector.platform,
+        "external_subject": connector.external_subject,
+        "connection_status": connector.connection_status,
+        "connected_at": connector.connected_at,
+        "last_synced_at": connector.last_synced_at,
+        "latest_run": _run_projection(connector.latest_run) if connector.latest_run else None,
+    }
+
+
+@app.get("/v1/connectors", tags=["connectors"])
+async def list_connectors(
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, object]:
+    """List the caller's own source connections and each one's latest run.
+
+    Credential material is never part of this projection: encrypted tokens live
+    in a table this read does not touch.
+    """
+    repository = get_connector_repository(request)
+    try:
+        connectors = await repository.list_own_connectors(tenant)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Connector service is unavailable",
+        ) from error
+    return {"connectors": [_connector_projection(connector) for connector in connectors]}
+
+
+@app.get("/v1/ingestion-runs/{run_id}", tags=["connectors"])
+async def get_ingestion_run(
+    run_id: str,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> dict[str, object]:
+    """Report one queued sync's progress, so a caller can follow the run it started."""
+    repository = get_connector_repository(request)
+    try:
+        run = await repository.get_own_run(tenant, run_id)
+    except RepositoryUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Connector service is unavailable",
+        ) from error
+    if run is None:
+        # A run owned by another tenant is indistinguishable from one that does
+        # not exist, which is the only answer that leaks nothing.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ingestion run not found",
+        )
+    return _run_projection(run)
 
 
 @app.post("/v1/webhooks/github", status_code=status.HTTP_202_ACCEPTED, tags=["github"])

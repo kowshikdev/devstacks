@@ -1,26 +1,68 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 
 import { signInWithGitHub, signInWithPassword, signUpWithPassword } from "../../lib/supabase/client";
+import { Button } from "../../components/ui/Button";
+import { Flash } from "../../components/ui/Feedback";
+import { TextField } from "../../components/ui/Field";
+import { CheckCircleIcon, DevStacksMark, GitHubIcon, ShieldIcon } from "../../components/ui/Icon";
 
 type Mode = "sign-in" | "sign-up";
 
+const PROOF_POINTS = [
+  "Connector tokens stay server-side, encrypted at rest.",
+  "The GitHub connector starts at read:user — nothing more.",
+  "Nothing reaches your public profile without your review.",
+];
+
 export default function LoginPage() {
-  const [mode, setMode] = useState<Mode>("sign-in");
+  return (
+    <Suspense fallback={<AuthSkeleton />}>
+      <LoginContent />
+    </Suspense>
+  );
+}
+
+function AuthSkeleton() {
+  return (
+    <div className="auth-layout">
+      <div className="auth-panel">
+        <div className="auth-card stack gap-4">
+          <div className="skeleton" style={{ height: 32, width: 180 }} />
+          <div className="skeleton" style={{ height: 44 }} />
+          <div className="skeleton" style={{ height: 44 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoginContent() {
+  const searchParams = useSearchParams();
+  const [mode, setMode] = useState<Mode>(
+    searchParams.get("intent") === "sign-up" ? "sign-up" : "sign-in"
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState(false);
+
+  const isSignUp = mode === "sign-up";
 
   async function handleGithub() {
     setError(null);
+    setOauthBusy(true);
     try {
       await signInWithGitHub(`${window.location.origin}/auth/callback`);
-      // Browser navigates away to GitHub; nothing more to do here.
+      // The browser navigates away to GitHub; nothing more to do here.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start GitHub sign-in");
+      setOauthBusy(false);
     }
   }
 
@@ -30,17 +72,17 @@ export default function LoginPage() {
     setNotice(null);
     setBusy(true);
     try {
-      if (mode === "sign-in") {
-        await signInWithPassword(email, password);
-        window.location.href = "/dashboard";
-      } else {
+      if (isSignUp) {
         const hasSession = await signUpWithPassword(email, password);
         if (hasSession) {
           window.location.href = "/dashboard";
-        } else {
-          setNotice("Check your email to confirm your account, then sign in.");
-          setMode("sign-in");
+          return;
         }
+        setNotice("Check your email to confirm your account, then sign in.");
+        setMode("sign-in");
+      } else {
+        await signInWithPassword(email, password);
+        window.location.href = "/dashboard";
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
@@ -49,84 +91,107 @@ export default function LoginPage() {
     }
   }
 
+  function switchMode() {
+    setMode(isSignUp ? "sign-in" : "sign-up");
+    setError(null);
+    setNotice(null);
+  }
+
   return (
-    <main className="dashboard">
-      <div className="panel" style={{ display: "flex", flexDirection: "column", gap: 20, padding: "40px 36px" }}>
-        <section className="intro">
-          <p className="eyebrow">{mode === "sign-in" ? "Sign in" : "Sign up"}</p>
-          <h1 style={{ fontSize: "1.7rem", margin: "8px 0 0" }}>
-            {mode === "sign-in" ? (
-              <>
-                Sign in to your <em>graph</em>
-              </>
-            ) : (
-              <>
-                Build your <em>graph</em>
-              </>
-            )}
+    <div className="auth-layout">
+      <div className="auth-panel">
+        <div className="auth-card">
+          <Link href="/" className="wordmark mb-6" style={{ display: "inline-flex" }}>
+            <DevStacksMark className="wordmark__mark" />
+            DevStacks
+          </Link>
+
+          <h1 style={{ fontSize: "var(--text-h2)" }}>
+            {isSignUp ? "Create your evidence graph" : "Sign in to DevStacks"}
           </h1>
-        </section>
+          <p className="text-sm text-muted mt-2">
+            {isSignUp
+              ? "Connect a source once. Review what it proves. Publish only what stands up."
+              : "Pick up where your evidence left off."}
+          </p>
 
-        <button className="github-button" onClick={handleGithub} type="button" style={{ width: "100%" }}>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
-          </svg>
-          Continue with GitHub
-        </button>
+          <div className="mt-6 stack gap-4">
+            <Button
+              variant="contrast"
+              size="lg"
+              block
+              onClick={handleGithub}
+              loading={oauthBusy}
+              leadingIcon={<GitHubIcon size={17} />}
+            >
+              Continue with GitHub
+            </Button>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-          <span className="muted" style={{ fontSize: "0.78rem" }}>
-            or use email and password
-          </span>
-          <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            <p className="divider--labelled">or use email</p>
+
+            <form className="stack gap-4" onSubmit={handleSubmit} noValidate>
+              <TextField
+                label="Email"
+                type="email"
+                autoComplete="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+              />
+              <TextField
+                label="Password"
+                type="password"
+                autoComplete={isSignUp ? "new-password" : "current-password"}
+                placeholder={isSignUp ? "At least 8 characters" : "Your password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                minLength={8}
+                hint={isSignUp ? "Use at least 8 characters." : undefined}
+                required
+              />
+              <Button type="submit" variant="primary" size="lg" block loading={busy}>
+                {isSignUp ? "Create account" : "Sign in"}
+              </Button>
+            </form>
+
+            {notice ? <Flash tone="success">{notice}</Flash> : null}
+            {error ? <Flash tone="danger">{error}</Flash> : null}
+
+            <p className="text-sm text-muted" style={{ textAlign: "center" }}>
+              {isSignUp ? "Already have an account?" : "New to DevStacks?"}{" "}
+              <button type="button" className="text-accent font-semibold" onClick={switchMode}>
+                {isSignUp ? "Sign in" : "Create an account"}
+              </button>
+            </p>
+
+            <p className="text-xs text-subtle" style={{ textAlign: "center" }}>
+              Prefer to look first?{" "}
+              <Link href="/try">Preview any public GitHub username</Link> — no account needed.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <aside className="auth-aside">
+        <div className="quote">
+          <ShieldIcon size={28} className="text-accent mb-4" />
+          <p className="quote__text">
+            &ldquo;A profile is only worth what it can withstand. DevStacks publishes the evidence
+            chain, not the conclusion.&rdquo;
+          </p>
+          <p className="quote__attribution">The DevStacks assurance model</p>
         </div>
 
-        <form className="auth-form" onSubmit={handleSubmit}>
-          <input
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            required
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            minLength={8}
-            required
-          />
-          <button type="submit" disabled={busy} style={{ marginTop: 2 }}>
-            {mode === "sign-in" ? "Sign in" : "Sign up"}
-          </button>
-        </form>
-
-        <button
-          type="button"
-          className="link-button"
-          style={{ justifySelf: "center", margin: "-8px auto 0" }}
-          onClick={() => {
-            setMode(mode === "sign-in" ? "sign-up" : "sign-in");
-            setError(null);
-            setNotice(null);
-          }}
-        >
-          {mode === "sign-in" ? "Need an account? Sign up" : "Already have an account? Sign in"}
-        </button>
-
-        {notice && (
-          <p className="muted" style={{ margin: 0 }}>
-            {notice}
-          </p>
-        )}
-        {error && (
-          <p className="error-text" style={{ margin: 0 }}>
-            {error}
-          </p>
-        )}
-      </div>
-    </main>
+        <ul className="stack gap-3" style={{ position: "relative", zIndex: 1 }}>
+          {PROOF_POINTS.map((point) => (
+            <li className="row row--start gap-3 text-sm text-muted" key={point}>
+              <CheckCircleIcon size={16} className="text-success shrink-0" />
+              {point}
+            </li>
+          ))}
+        </ul>
+      </aside>
+    </div>
   );
 }
