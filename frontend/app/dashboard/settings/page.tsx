@@ -5,7 +5,6 @@ import { useState } from "react";
 import AppShell from "../../../components/AppShell";
 import { toHeaderUser, useProfile } from "../../../lib/hooks/useProfile";
 import { signOut } from "../../../lib/supabase/client";
-import { useTheme, type ThemePreference } from "../../../components/ThemeProvider";
 import { Avatar } from "../../../components/ui/Avatar";
 import { Button, ButtonLink } from "../../../components/ui/Button";
 import { Card, CardBody, CardHeader } from "../../../components/ui/Card";
@@ -13,26 +12,11 @@ import { CopyButton } from "../../../components/ui/CopyButton";
 import { Dialog } from "../../../components/ui/Dialog";
 import { Flash, Skeleton } from "../../../components/ui/Feedback";
 import { Label } from "../../../components/ui/Label";
-import { ButtonTabs } from "../../../components/ui/Tabs";
 import { useToast } from "../../../components/ui/Toast";
-import {
-  GlobeIcon,
-  LockIcon,
-  MonitorIcon,
-  MoonIcon,
-  SignOutIcon,
-  SunIcon,
-} from "../../../components/ui/Icon";
-
-const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" },
-];
+import { GlobeIcon, LockIcon, SignOutIcon } from "../../../components/ui/Icon";
 
 export default function SettingsPage() {
   const { profile, loading } = useProfile();
-  const { preference, setPreference } = useTheme();
   const { toast } = useToast();
   const [signOutOpen, setSignOutOpen] = useState(false);
 
@@ -135,37 +119,6 @@ export default function SettingsPage() {
                   View public profile
                 </ButtonLink>
               ) : null}
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader title="Appearance" />
-          <CardBody>
-            <div className="row row--between row--wrap gap-4">
-              <div className="flex-1">
-                <p className="text-sm font-semibold">Theme</p>
-                <p className="text-xs text-muted mt-1">
-                  Applied before first paint, so switching never flashes.
-                </p>
-              </div>
-              <ButtonTabs
-                value={preference}
-                onChange={setPreference}
-                options={THEME_OPTIONS}
-                label="Theme preference"
-              />
-            </div>
-            <div className="row gap-4 mt-4 text-xs text-subtle">
-              <span className="row gap-1">
-                <SunIcon size={13} /> Light
-              </span>
-              <span className="row gap-1">
-                <MoonIcon size={13} /> Dark
-              </span>
-              <span className="row gap-1">
-                <MonitorIcon size={13} /> Follows your device
-              </span>
             </div>
           </CardBody>
         </Card>

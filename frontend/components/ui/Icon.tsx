@@ -240,29 +240,37 @@ export function GitHubIcon({ size = 16, ...props }: IconProps) {
   );
 }
 
-/** The DevStacks mark: one source node fanning into two verified evidence nodes. */
+/**
+ * The DevStacks mark: three stacked plates, the top one verified.
+ *
+ * Literal to the name, and to the model underneath it — evidence accumulates
+ * in layers, and the topmost is the one that passed verification. Drawn in
+ * perspective so the silhouette stays distinct at 16px, where a set of flat
+ * bars would read as a menu button instead.
+ */
 export function DevStacksMark({ size = 26, ...props }: IconProps) {
   return (
     <svg
-      viewBox="0 0 26 26"
+      viewBox="0 0 32 32"
       width={size}
       height={size}
       fill="none"
       aria-hidden={props["aria-label"] ? undefined : true}
+      role={props["aria-label"] ? "img" : undefined}
       focusable="false"
       {...props}
     >
-      <rect width="26" height="26" rx="7" fill="var(--fg-default)" />
+      <path d="M16 4.5 27 10.2 16 15.9 5 10.2Z" fill="var(--ds-brand-400)" />
       <path
-        d="M8.6 11.4 16.4 7.6M8.6 14.6 16.4 18.4"
-        stroke="var(--canvas-default)"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        opacity="0.55"
+        d="M16 18.6 25.4 13.7 27 14.6 16 20.3 5 14.6 6.6 13.7Z"
+        fill="var(--fg-default)"
+        opacity="0.78"
       />
-      <circle cx="7.4" cy="13" r="3" stroke="var(--canvas-default)" strokeWidth="1.6" />
-      <circle cx="18" cy="7" r="2.5" fill="var(--ds-brand-400)" />
-      <circle cx="18" cy="19" r="2.5" fill="var(--ds-brand-400)" />
+      <path
+        d="M16 23 25.4 18.1 27 19 16 24.7 5 19 6.6 18.1Z"
+        fill="var(--fg-default)"
+        opacity="0.5"
+      />
     </svg>
   );
 }

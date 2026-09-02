@@ -77,7 +77,7 @@ Two things stay private by construction: the observed payload, and the source re
 
 Connector state is read from `GET /v1/connectors`, which projects the caller's own source connections and each one's latest ingestion run. Credential material is never part of that projection: encrypted tokens live in a table the read does not touch. A queued sync is followed through `GET /v1/ingestion-runs/{run_id}` until it reaches a terminal status, so the interface reports what the worker actually did rather than what was requested.
 
-Light and dark themes are both first-class and applied before first paint. Navigation is available from anywhere with `Ctrl-K` (`⌘K` on macOS), and the review queue is fully keyboard-operable. See [frontend/README.md](frontend/README.md) for the design-system rules and the conventions a new surface must follow.
+The interface is dark only: `color-scheme: dark` and an explicit `themeColor` mean a browser set to light still gets the dark UI, with no flash and no theme switching to reason about. Navigation is available from anywhere with `Ctrl-K` (`⌘K` on macOS), and the review queue is fully keyboard-operable. See [frontend/README.md](frontend/README.md) for the design-system rules and the conventions a new surface must follow.
 
 ## Supabase Project
 

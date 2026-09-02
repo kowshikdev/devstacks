@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { signOut } from "../lib/supabase/client";
-import { ThemeToggle } from "./ThemeToggle";
 import { Avatar } from "./ui/Avatar";
 import { Button, ButtonLink, IconButton } from "./ui/Button";
 import {
@@ -101,7 +100,6 @@ export function SiteHeader({ user, variant = "app" }: { user?: HeaderUser | null
               onClick={openPalette}
               className="hide-md"
             />
-            <ThemeToggle />
 
             {user ? (
               <Menu

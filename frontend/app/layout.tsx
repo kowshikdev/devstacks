@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans, Instrument_Serif } from "next/font/google";
 import type { ReactNode } from "react";
 
-import { ThemeProvider, themeNoFlashScript } from "../components/ThemeProvider";
 import { ToastProvider } from "../components/ui/Toast";
 import "./globals.css";
 
@@ -61,10 +60,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0b0f0e" },
-  ],
+  // One theme, so one colour: browser chrome matches --canvas-default.
+  themeColor: "#0b0f0e",
+  colorScheme: "dark",
   width: "device-width",
   initialScale: 1,
 };
@@ -73,17 +71,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
   return (
     <html
       lang="en"
-      suppressHydrationWarning
       className={`${plexSans.variable} ${plexMono.variable} ${instrumentSerif.variable}`}
     >
-      <head>
-        {/* Applies the stored theme before first paint so dark-mode users never see a white flash. */}
-        <script dangerouslySetInnerHTML={{ __html: themeNoFlashScript }} />
-      </head>
       <body>
-        <ThemeProvider>
-          <ToastProvider>{children}</ToastProvider>
-        </ThemeProvider>
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );
