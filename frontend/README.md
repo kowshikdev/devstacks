@@ -26,7 +26,6 @@ components/
   SiteHeader.tsx         Global header, nav, account menu, mobile drawer.
   SiteFooter.tsx         Global footer.
   CommandPalette.tsx     ⌘K / Ctrl-K navigation and handle lookup.
-  ThemeProvider.tsx      Theme preference, persisted, applied before paint.
 lib/
   api/client.ts          Typed API client (bearer token from Supabase).
   supabase/client.ts     Auth only.
@@ -35,8 +34,8 @@ lib/
                          until it reaches a terminal status.
   format/time.ts         Pure formatters usable from server components.
 styles/
-  tokens.css             Primitives, then semantic roles. Themes redefine
-                         only the semantic layer.
+  tokens.css             Primitives, then semantic roles. Components use
+                         only the roles.
   base.css               Reset, typography defaults, focus, scrollbars.
   components.css         Component classes (buttons, cards, labels, …).
   layout.css             Chrome and page-level composition.
@@ -50,14 +49,21 @@ imports CSS directly.
 
 **Tokens, not values.** Components reference semantic tokens (`--fg-muted`,
 `--canvas-subtle`, `--accent-emphasis`), never a raw hex or a primitive
-(`--ds-gray-500`). A theme is then a redefinition of the semantic layer alone,
-which is why light and dark need no component changes.
+(`--ds-gray-500`). A colour is therefore defined in one place, and a surface can
+be retuned without touching a component.
 
-**Themes.** Light is the base. `:root[data-theme="dark"]` and the
-`prefers-color-scheme` block both define the same dark roles, so an explicit
-choice wins in either direction and the system default still works. The
-preference is applied by an inline script before first paint — there is no
-flash on load.
+**One theme.** DevStacks is dark only. `color-scheme: dark` and an explicit
+`themeColor` mean a browser set to light still gets the dark UI, with no flash
+and no switching to reason about. There is no `[data-theme]` attribute and no
+`prefers-color-scheme` block: if a light theme is ever wanted, it is a second
+definition of the semantic layer, and no component changes.
+
+**The mark.** `DevStacksMark` in `components/ui/Icon.tsx` is three stacked
+plates with the top one in the brand accent — literal to the name, and to the
+model underneath it: evidence accumulates in layers, and the topmost is the one
+that passed verification. It is drawn in perspective so the silhouette stays
+distinct at 16px, where flat stacked bars read as a menu button instead.
+`app/icon.svg` is the same mark as the favicon.
 
 **One icon set.** `components/ui/Icon.tsx` builds every glyph from one factory,
 so stroke weight and optical size stay consistent. Icons are decorative by
@@ -98,6 +104,6 @@ real 404, which is covered by tests.
 
 1. Add the route under `app/`.
 2. Compose it from `components/ui` — if a primitive is missing, add it there
-   rather than styling inline, so it lands in both themes at once.
+   rather than styling inline, so it stays consistent everywhere.
 3. Wrap it in `AppShell` (signed-in) or `PublicShell` (public).
 4. Handle all four data states before shipping.

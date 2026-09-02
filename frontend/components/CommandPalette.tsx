@@ -8,14 +8,11 @@ import {
   GearIcon,
   GraphIcon,
   InboxIcon,
-  MoonIcon,
   PlugIcon,
   SearchIcon,
-  SunIcon,
   UserIcon,
   UsersIcon,
 } from "./ui/Icon";
-import { useTheme } from "./ThemeProvider";
 
 interface Command {
   id: string;
@@ -32,7 +29,6 @@ interface Command {
  */
 export function CommandPalette() {
   const router = useRouter();
-  const { setPreference } = useTheme();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -103,28 +99,8 @@ export function CommandPalette() {
         keywords: "try preview demo github username",
         run: go("/try"),
       },
-      {
-        id: "theme-light",
-        label: "Switch to light theme",
-        icon: <SunIcon />,
-        keywords: "theme light appearance day",
-        run: () => {
-          setPreference("light");
-          close();
-        },
-      },
-      {
-        id: "theme-dark",
-        label: "Switch to dark theme",
-        icon: <MoonIcon />,
-        keywords: "theme dark appearance night",
-        run: () => {
-          setPreference("dark");
-          close();
-        },
-      },
     ],
-    [go, setPreference, close]
+    [go]
   );
 
   const trimmed = query.trim();

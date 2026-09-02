@@ -68,22 +68,12 @@ export default async function Image({ params }: { params: Promise<{ handle: stri
       >
         {/* Brand lockup */}
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 44,
-              height: 44,
-              borderRadius: 12,
-              background: FG,
-              color: CANVAS,
-              fontSize: 24,
-              fontWeight: 700,
-            }}
-          >
-            DS
-          </div>
+          {/* The mark, drawn inline: the OG renderer has no access to the app's CSS. */}
+          <svg width="44" height="44" viewBox="0 0 32 32">
+            <path d="M16 4.5 27 10.2 16 15.9 5 10.2Z" fill={BRAND} />
+            <path d="M16 18.6 25.4 13.7 27 14.6 16 20.3 5 14.6 6.6 13.7Z" fill="#c9d6d1" />
+            <path d="M16 23 25.4 18.1 27 19 16 24.7 5 19 6.6 18.1Z" fill="#8b9c95" />
+          </svg>
           <div style={{ display: "flex", fontSize: 24, fontWeight: 700, letterSpacing: 1 }}>
             DEVSTACKS
           </div>
